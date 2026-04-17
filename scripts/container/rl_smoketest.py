@@ -3,7 +3,7 @@
 
 Not a real RL pipeline — just imports torch, confirms CUDA, runs a toy forward
 pass of a policy-shaped MLP on the GPU. Newton's RL examples (e.g.
-robot_anymal_c_walk) can be run via `./run.sh example robot_anymal_c_walk`.
+robot_anymal_c_walk) can be run via `./scripts/host/run.sh example robot_anymal_c_walk`.
 """
 
 from __future__ import annotations

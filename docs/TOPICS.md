@@ -42,7 +42,7 @@ ros2 service call /sim/step std_srvs/srv/Trigger "{}"
 ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
 ```
 
-스크립트 예시: [scripts/controller_demo.py](../scripts/controller_demo.py).
+스크립트 예시: [examples/controller_demo.py](../examples/controller_demo.py).
 
 ## Extension: gripper topic (미구현)
 
@@ -59,7 +59,7 @@ ros:
       target_joints: [finger_joint1, finger_joint2]  # mimic coupled
 ```
 
-지금은 arm-only (franka 7 DoF) 로 통일. gripper 필요해지면 `extra_topics:` 스키마 + 스트림 분기 로직을 `sim_node.py` 에 추가.
+지금은 arm-only (franka 7 DoF) 로 통일. gripper 필요해지면 `extra_topics:` 스키마 + 스트림 분기 로직을 [src/newton_bridge/node.py](../src/newton_bridge/node.py) 에 추가.
 
 ## Extension: per-step srv (미구현)
 

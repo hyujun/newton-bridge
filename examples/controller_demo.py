@@ -7,8 +7,8 @@ Handshake mode:  call /sim/step N times, each preceded by a target update.
 Run on the HOST (not inside the container).
 Example:
     source /opt/ros/jazzy/setup.bash
-    python3 scripts/controller_demo.py --mode freerun --robot ur5e
-    python3 scripts/controller_demo.py --mode handshake --robot franka --steps 200
+    python3 examples/controller_demo.py --mode freerun --robot ur5e
+    python3 examples/controller_demo.py --mode handshake --robot franka --steps 200
 """
 
 from __future__ import annotations

@@ -1,14 +1,13 @@
-# -- asset cache (populated by scripts/fetch_assets.sh) -----------------------
-assets/_cache/
+# -- asset cache (populated by scripts/host/fetch_assets.sh) ------------------
+assets/_cache/*
+!assets/_cache/README.md
 
 # -- pulled robot assets (license-isolated, fetched on demand) ----------------
-robots/franka/mjcf/
-robots/kuka_iiwa_14/mjcf/
-robots/ur5e/urdf/
-robots/*/meshes/
+robots/*/models/
 
 # -- runtime workspace (container writes here) --------------------------------
 workspace/outputs/
+workspace/models/
 workspace/notebooks/.ipynb_checkpoints/
 
 # -- python ------------------------------------------------------------------
@@ -17,6 +16,8 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+build/
+dist/
 
 # -- editor / env ------------------------------------------------------------
 .env

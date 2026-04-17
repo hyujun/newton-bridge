@@ -1,6 +1,6 @@
 # Franka Emika Panda — 7-DoF arm.
 # Source: mujoco_menagerie / franka_emika_panda (Apache-2.0).
-# Pulled in by scripts/fetch_assets.sh.
+# Pulled in by scripts/host/fetch_assets.sh.
 #
 # Scope: arm only (7 DoF). The gripper fingers are intentionally excluded
 # from joint_names so /joint_command stays uniform across all packs. To
@@ -9,7 +9,7 @@
 
 robot:
   source: mjcf
-  source_rel: mjcf/panda.xml
+  source_rel: models/panda.xml
   base_position: [0.0, 0.0, 0.0]
 
 sim:

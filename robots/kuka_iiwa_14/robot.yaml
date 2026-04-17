@@ -1,10 +1,10 @@
 # KUKA LBR iiwa 14 — 7-DoF arm (successor to the DLR/KUKA LWR4+ line).
 # Source: mujoco_menagerie / kuka_iiwa_14 (Apache-2.0).
-# Pulled in by scripts/fetch_assets.sh.
+# Pulled in by scripts/host/fetch_assets.sh.
 
 robot:
   source: mjcf
-  source_rel: mjcf/iiwa14.xml
+  source_rel: models/iiwa14.xml
   base_position: [0.0, 0.0, 0.0]
 
 sim:

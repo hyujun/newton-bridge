@@ -1,9 +1,9 @@
 # UR5e — Universal Robots 6-DoF collaborative arm.
-# Source: ur_description (BSD-3). Copied in by scripts/fetch_assets.sh.
+# Source: ur_description (BSD-3). Copied in by scripts/host/fetch_assets.sh.
 
 robot:
   source: urdf
-  source_rel: urdf/ur5e.urdf
+  source_rel: models/ur5e.urdf
   base_position: [0.0, 0.0, 0.0]
 
 sim:

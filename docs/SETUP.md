@@ -17,9 +17,9 @@ nvidia-smi           # CUDA Version: 12.4+
 
 # 2) Docker + compose v2 + NVIDIA Container Toolkit 자동 설치
 #    (sim-bridge 셋업 등으로 이미 깔려 있으면 스킵됨)
-./install.sh
-#    옵션: ./install.sh --only-check    # 현재 상태만 점검
-#          ./install.sh --no-nvidia     # GPU 있어도 toolkit 건너뜀
+./scripts/host/install.sh
+#    옵션: ./scripts/host/install.sh --only-check   # 현재 상태만 점검
+#          ./scripts/host/install.sh --no-nvidia    # GPU 있어도 toolkit 건너뜀
 
 # 3) ROS 2 Jazzy (호스트용 — 컨테이너와 DDS 토픽 주고받을 용도)
 #    https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html
@@ -58,13 +58,13 @@ cp .env.example .env
 ${EDITOR:-nano} .env
 
 # 로봇 에셋 다운로드 (mujoco_menagerie + UR5e URDF)
-./scripts/fetch_assets.sh
+./scripts/host/fetch_assets.sh
 
 # 컨테이너 이미지 빌드 (5~15분)
-./build.sh
+./scripts/host/build.sh
 
 # 빌드 검증
-./run.sh verify
+./scripts/host/run.sh verify
 ```
 
 `verify` 가 5/6 섹션 PASS 로 끝나면 세팅 완료. FAIL 나오면 [TROUBLESHOOTING](ARCHITECTURE.md#알려진-이슈) 참고.
@@ -73,12 +73,12 @@ ${EDITOR:-nano} .env
 
 ```bash
 # 터미널 A — sim 기동 (freerun, ur5e 기본)
-./run.sh sim
+./scripts/host/run.sh sim
 
 # 터미널 B — 호스트 ROS 2 로 연동 확인
 source /opt/ros/jazzy/setup.bash
 export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
-./scripts/verify_ros.sh
+./scripts/host/verify_ros.sh
 ```
 
 `ros2 topic hz /clock`, `ros2 topic hz /joint_states` 가 목표 rate 근처로 떠야 정상.
@@ -86,9 +86,9 @@ export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ## 다른 로봇 / 다른 sync mode
 
 ```bash
-ROBOT=franka ./run.sh sim                             # freerun, franka
-ROBOT=kuka_iiwa_14 SYNC_MODE=handshake ./run.sh sim   # handshake, iiwa14
-FREERUN_RATE=max ./run.sh sim                         # as-fast-as-possible
+ROBOT=franka ./scripts/host/run.sh sim                             # freerun, franka
+ROBOT=kuka_iiwa_14 SYNC_MODE=handshake ./scripts/host/run.sh sim   # handshake, iiwa14
+FREERUN_RATE=max ./scripts/host/run.sh sim                         # as-fast-as-possible
 ```
 
 ## GUI viewer (Newton 자체 뷰어)
@@ -96,7 +96,7 @@ FREERUN_RATE=max ./run.sh sim                         # as-fast-as-possible
 ROS 2 연동 없이 Newton 샘플 씬을 띄우고 싶을 때:
 
 ```bash
-./run.sh example basic_pendulum --viewer gl
+./scripts/host/run.sh example basic_pendulum --viewer gl
 ```
 
 `DISPLAY` 가 세팅돼 있으면 호스트 X 서버로 창이 뜸. 헤드리스면 `--viewer usd --output-path /workspace/workspace/outputs/xxx.usd` 로 파일 저장.
@@ -104,7 +104,7 @@ ROS 2 연동 없이 Newton 샘플 씬을 띄우고 싶을 때:
 ## Jupyter
 
 ```bash
-./run.sh jupyter
+./scripts/host/run.sh jupyter
 # 브라우저로 http://localhost:8888/?token=newton
 ```
 
@@ -112,4 +112,4 @@ ROS 2 연동 없이 Newton 샘플 씬을 띄우고 싶을 때:
 
 - **Python 3.10 불가**: Newton 가이드 §9 의 `imgui_bundle` 빌드 이슈 때문. 이 repo 는 Ubuntu 24.04 + Python 3.12 로 통일.
 - **GPU 전용 기능**: SDF collision, mesh-mesh contact, tiled camera sensor, implicit MPM 등은 NVIDIA GPU 필수. 호스트에 GPU 없으면 이 repo 의 대부분이 안 돕니다.
-- **컨테이너 UID 매칭**: `docker-compose.yml` 의 `user: ${UID}:${GID}` 가 호스트 UID 를 따라가도록 되어 있음. `./build.sh` 와 `./run.sh` 는 자동으로 `UID=$(id -u)` 를 export. `sudo` 로 실행하면 루트 UID 로 세팅 파일이 만들어지니 주의.
+- **컨테이너 UID 매칭**: `docker/compose.yml` 의 `user: ${HOST_UID}:${HOST_GID}` 가 호스트 UID 를 따라가도록 되어 있음. `scripts/host/build.sh` 와 `scripts/host/run.sh` 는 자동으로 `HOST_UID=$(id -u)` 를 export. `sudo` 로 실행하면 루트 UID 로 세팅 파일이 만들어지니 주의.

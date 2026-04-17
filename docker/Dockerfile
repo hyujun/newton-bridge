@@ -90,6 +90,15 @@ RUN pip install --no-cache-dir \
         "newton[torch-cu12]" \
         --extra-index-url https://download.pytorch.org/whl/cu128
 
+# -- newton_bridge package (editable install; src/ bind-mounted at runtime) ---
+# Copy pyproject + package so `pip install -e .` resolves the package layout.
+# The bind-mount in docker/compose.yml replaces /workspace/newton-bridge/src
+# at runtime, so host edits are reflected without rebuilding.
+WORKDIR /workspace/newton-bridge
+COPY pyproject.toml ./
+COPY src ./src
+RUN pip install --no-cache-dir -e .
+
 # -- entrypoint: source ROS 2 then exec CMD -----------------------------------
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

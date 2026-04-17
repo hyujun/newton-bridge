@@ -2,19 +2,22 @@
 # Launch / manage the newton-bridge container.
 #
 # Usage:
-#   ./run.sh                              # up (foreground, default robot=ur5e, freerun)
-#   ROBOT=franka ./run.sh                 # pick pack
-#   SYNC_MODE=handshake ./run.sh          # pick sync mode
-#   ./run.sh sim                          # same as default up
-#   ./run.sh shell                        # interactive bash
-#   ./run.sh example basic_pendulum       # run a Newton example (viewer gl)
-#   ./run.sh jupyter                      # start Jupyter on host:8888
-#   ./run.sh verify                       # in-container smoke test
-#   ./run.sh down                         # stop + remove container
+#   ./scripts/host/run.sh                              # up (foreground, robot=ur5e, freerun)
+#   ROBOT=franka ./scripts/host/run.sh                 # pick pack
+#   SYNC_MODE=handshake ./scripts/host/run.sh          # pick sync mode
+#   ./scripts/host/run.sh sim                          # same as default up
+#   ./scripts/host/run.sh shell                        # interactive bash
+#   ./scripts/host/run.sh example basic_pendulum       # run a Newton example (viewer gl)
+#   ./scripts/host/run.sh jupyter                      # start Jupyter on host:8888
+#   ./scripts/host/run.sh verify                       # in-container smoke test
+#   ./scripts/host/run.sh down                         # stop + remove container
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+COMPOSE=(docker compose -f docker/compose.yml)
 
 # X11 passthrough (safe no-op if already granted).
 if command -v xhost >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
@@ -39,16 +42,16 @@ shift || true
 
 case "${MODE}" in
     sim|up)
-        exec docker compose run --rm --service-ports newton-bridge \
-            python3 /workspace/sim_node.py "$@"
+        exec "${COMPOSE[@]}" run --rm --service-ports newton-bridge \
+            python3 -m newton_bridge "$@"
         ;;
     upd)
-        exec docker compose up -d
+        exec "${COMPOSE[@]}" up -d
         ;;
     shell)
         # Start the service if not already running, then drop into bash.
-        docker compose up -d
-        exec docker compose exec newton-bridge bash
+        "${COMPOSE[@]}" up -d
+        exec "${COMPOSE[@]}" exec newton-bridge bash
         ;;
     example)
         if [[ $# -lt 1 ]]; then
@@ -56,25 +59,25 @@ case "${MODE}" in
             echo "  e.g. $0 example basic_pendulum --viewer gl" >&2
             exit 1
         fi
-        exec docker compose run --rm --service-ports newton-bridge \
+        exec "${COMPOSE[@]}" run --rm --service-ports newton-bridge \
             python3 -m newton.examples "$@"
         ;;
     jupyter)
-        exec docker compose run --rm --service-ports newton-bridge \
+        exec "${COMPOSE[@]}" run --rm --service-ports newton-bridge \
             jupyter notebook \
                 --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
                 --ServerApp.token="${JUPYTER_TOKEN:-newton}" \
                 --notebook-dir=/workspace/workspace/notebooks
         ;;
     verify)
-        exec docker compose run --rm newton-bridge \
+        exec "${COMPOSE[@]}" run --rm newton-bridge \
             bash /workspace/scripts/verify.sh
         ;;
     logs)
-        exec docker compose logs -f
+        exec "${COMPOSE[@]}" logs -f
         ;;
     down)
-        exec docker compose down
+        exec "${COMPOSE[@]}" down
         ;;
     *)
         cat >&2 <<EOF

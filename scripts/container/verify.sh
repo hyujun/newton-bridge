@@ -64,17 +64,15 @@ banner "6. load every robot pack"
 for pack in /workspace/robots/*/; do
     name="$(basename "${pack%/}")"
     run "pack ${name} parses + finalizes" python3 - <<PY
-import os, sys
+import os
 os.environ['ROBOT_PACK'] = "${pack%/}"
 # Just exercise the load path (parse -> finalize), not the ROS 2 loop.
 import warp as wp; wp.init()
-sys.path.insert(0, '/workspace')
-# Avoid rclpy.init() path: import sim_node module but don't run main().
-import importlib.util as _u
-spec = _u.spec_from_file_location('sim_node', '/workspace/sim_node.py')
-mod  = _u.module_from_spec(spec); spec.loader.exec_module(mod)
-pack = mod.load_pack(__import__('pathlib').Path("${pack%/}"))
-world = mod.NewtonWorld(pack)
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+pack = load_pack(Path("${pack%/}"))
+world = NewtonWorld(pack)
 for _ in range(5):
     world.step()
 print(f"ok: dof={world.total_dof}, joints={len(world.joint_layout)}, t={world.sim_time:.4f}")

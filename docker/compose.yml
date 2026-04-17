@@ -1,8 +1,8 @@
 services:
   newton-bridge:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     image: newton-bridge:latest
     container_name: newton-bridge
     runtime: nvidia
@@ -14,7 +14,8 @@ services:
     stdin_open: true
     tty: true
     # Match the host UID so bind-mounted output files are not root-owned.
-    # build.sh / run.sh export HOST_UID/HOST_GID for you; override manually with
+    # scripts/host/build.sh / scripts/host/run.sh export HOST_UID/HOST_GID for
+    # you; override manually with
     # `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up`.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -30,14 +31,14 @@ services:
       # FastDDS SHM transport breaks across UID boundaries; force UDPv4 on
       # both container and host (export the same var in your host shell).
       - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
-      # -- sim_node.py config ----------------------------------------------
+      # -- newton_bridge config --------------------------------------------
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
       - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | handshake
       - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
       # -- Optional Newton GL viewer ---------------------------------------
       # ENABLE_VIEWER=1 opens a window via newton.viewer.ViewerGL. Requires
       # X11 passthrough (already wired above) + nvidia GL (driver caps include
-      # graphics,display). Window close → sim_node exits.
+      # graphics,display). Window close -> sim exits.
       - ENABLE_VIEWER=${ENABLE_VIEWER:-0}
       - VIEWER_WIDTH=${VIEWER_WIDTH:-1280}
       - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
@@ -53,10 +54,11 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
-      - ./sim_node.py:/workspace/sim_node.py:ro
-      - ./robots:/workspace/robots:ro
-      - ./scripts:/workspace/scripts:ro
-      - ./workspace:/workspace/workspace:rw
+      # Bind-mount source for live edits; editable install happens at build.
+      - ../src:/workspace/newton-bridge/src:ro
+      - ../robots:/workspace/robots:ro
+      - ../scripts/container:/workspace/scripts:ro
+      - ../workspace:/workspace/workspace:rw
       # pip cache survives rebuilds
       - newton-pip-cache:/home/user/.cache/pip
     working_dir: /workspace

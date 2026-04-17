@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
 
 NO_CACHE=""
 if [[ "${1:-}" == "--no-cache" ]]; then
@@ -14,10 +15,10 @@ fi
 export HOST_UID="${HOST_UID:-$(id -u)}"
 export HOST_GID="${HOST_GID:-$(id -g)}"
 
-docker compose build ${NO_CACHE}
+docker compose -f docker/compose.yml build ${NO_CACHE}
 
 echo
 echo "[build] done. Next:"
-echo "  cp .env.example .env   # (optional) tune defaults"
-echo "  ./scripts/fetch_assets.sh   # download robot meshes/MJCF"
-echo "  ./run.sh verify        # smoke-test the image"
+echo "  cp .env.example .env                 # (optional) tune defaults"
+echo "  ./scripts/host/fetch_assets.sh       # download robot meshes/MJCF"
+echo "  ./scripts/host/run.sh verify         # smoke-test the image"

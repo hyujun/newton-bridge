@@ -6,7 +6,8 @@
 #   4. Add current user to the 'docker' group
 #
 # Does NOT fetch assets, build the image, or run smoke tests — those are
-# separate steps (./scripts/fetch_assets.sh, ./build.sh, ./run.sh verify).
+# separate steps (scripts/host/fetch_assets.sh, scripts/host/build.sh,
+# scripts/host/run.sh verify).
 #
 # Targets Ubuntu 22.04 / 24.04. Idempotent: re-running skips already-installed
 # components. Requires sudo.
@@ -136,8 +137,8 @@ cat <<'EOF'
 [install] host prerequisites installed. Next:
   # if you were just added to the 'docker' group, log out and back in first
 
-  ./scripts/fetch_assets.sh   # download URDF / MJCF robot assets
-  ./build.sh                  # build the newton-bridge image (5-15 min)
-  ./run.sh verify             # in-container smoke test
-  ./run.sh sim                # start the sim (ROBOT=ur5e, freerun)
+  ./scripts/host/fetch_assets.sh   # download URDF / MJCF robot assets
+  ./scripts/host/build.sh          # build the newton-bridge image (5-15 min)
+  ./scripts/host/run.sh verify     # in-container smoke test
+  ./scripts/host/run.sh sim        # start the sim (ROBOT=ur5e, freerun)
 EOF

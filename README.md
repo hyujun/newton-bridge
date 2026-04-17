@@ -4,6 +4,8 @@
 
 `network_mode: host` 로 컨테이너의 DDS 참여자가 호스트와 동일 도메인에 속하므로, 호스트에서 `ros2 topic list` 로 바로 `/clock`, `/joint_states`, `/joint_command` 가 보입니다.
 
+English summary: [docs/en/README.md](docs/en/README.md)
+
 ## 한눈에
 
 ```
@@ -15,7 +17,7 @@
 │                             │                        │
 │   ┌─────────────────────────┴──────────────────────┐ │
 │   │ Container: newton-bridge                        │ │
-│   │   sim_node.py                                   │ │
+│   │   python -m newton_bridge                       │ │
 │   │     ├─ Newton: ModelBuilder + solver step       │ │
 │   │     └─ rclpy: /clock, /joint_states/command,    │ │
 │   │                /sim/step, /sim/reset            │ │
@@ -26,19 +28,19 @@
 ## Quick start
 
 ```bash
-./install.sh                # 호스트 prereq 설치 (docker, compose v2, nvidia-container-toolkit)
-./scripts/fetch_assets.sh   # mujoco_menagerie + ur5e URDF 다운로드
-./build.sh                  # Docker 이미지 빌드 (5~15분)
-./run.sh verify             # 컨테이너 스모크 테스트
-./run.sh sim                # ROBOT=ur5e, freerun, 기본 (headless)
-ENABLE_VIEWER=1 ./run.sh sim   # 같은데 Newton GL viewer 창을 띄움
+./scripts/host/install.sh        # 호스트 prereq (docker, compose v2, nvidia-container-toolkit)
+./scripts/host/fetch_assets.sh   # mujoco_menagerie + ur5e URDF 다운로드
+./scripts/host/build.sh          # Docker 이미지 빌드 (5~15분)
+./scripts/host/run.sh verify     # 컨테이너 스모크 테스트
+./scripts/host/run.sh sim        # ROBOT=ur5e, freerun, 기본 (headless)
+ENABLE_VIEWER=1 ./scripts/host/run.sh sim   # 같은데 Newton GL viewer 창을 띄움
 ```
 
-> `install.sh` 는 **호스트에 Docker 구동 패키지만** 설치합니다 (이미지 빌드/에셋
-> 다운로드는 별개 단계). 이미 docker + nvidia toolkit 이 깔려 있으면 그냥
-> 건너뛰어도 됩니다. `./install.sh --only-check` 로 현재 상태만 점검 가능.
+> `install.sh` 는 **호스트에 Docker 구동 패키지만** 설치합니다. 이미 docker +
+> nvidia toolkit 이 깔려 있으면 건너뛰어도 됩니다. `--only-check` 로 현재 상태만
+> 점검 가능.
 
-> Viewer 는 X11 passthrough(이미 `docker-compose.yml` 에 wired) + nvidia GL
+> Viewer 는 X11 passthrough(이미 `docker/compose.yml` 에 wired) + nvidia GL
 > 드라이버가 필요합니다. 창을 닫으면 sim 도 종료됩니다. `handshake` 모드에서는
 > `/sim/step` / `/sim/reset` 호출 시점에만 프레임이 갱신됩니다.
 
@@ -48,7 +50,7 @@ ENABLE_VIEWER=1 ./run.sh sim   # 같은데 Newton GL viewer 창을 띄움
 source /opt/ros/jazzy/setup.bash
 export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic hz /joint_states
-python3 scripts/controller_demo.py --mode freerun --robot ur5e
+python3 examples/controller_demo.py --mode freerun --robot ur5e
 ```
 
 ## Supported robots
@@ -59,7 +61,7 @@ python3 scripts/controller_demo.py --mode freerun --robot ur5e
 | `franka` | 7 | MJCF (mujoco_menagerie/franka_emika_panda) | mujoco |
 | `kuka_iiwa_14` | 7 | MJCF (mujoco_menagerie/kuka_iiwa_14) | mujoco |
 
-전환은 env var 하나: `ROBOT=kuka_iiwa_14 ./run.sh sim`.
+전환은 env var 하나: `ROBOT=kuka_iiwa_14 ./scripts/host/run.sh sim`.
 
 새 로봇 추가 또는 외부 `*_description` 패키지(URDF / xacro / MJCF) 연동은 [docs/ROBOTS.md](docs/ROBOTS.md) 참고.
 
@@ -70,42 +72,53 @@ python3 scripts/controller_demo.py --mode freerun --robot ur5e
 | `freerun` (default) | sim 이 `FREERUN_RATE=realtime\|max` 로 자율 step | 관찰, loose-sync 제어, 데모 |
 | `handshake` | 외부가 `/sim/step` 호출 시에만 1 step | deterministic RL rollout, 결정성 테스트 |
 
-## 설치된 Newton extras (전체)
+## 설치된 Newton extras
 
 - `examples` — sim + importers + viewer (GL/USD)
 - `torch-cu12` — PyTorch CUDA 12.8 (RL policy 추론)
 - `notebook` — Jupyter + Rerun
 - `dev` — 테스트/린트
 
-Jupyter 는 `./run.sh jupyter` 로 host:8888 에.
+Jupyter 는 `./scripts/host/run.sh jupyter` 로 host:8888 에.
 
 ## 디렉토리 레이아웃
 
 ```
 newton-bridge/
-├── README.md                    ← 여기
-├── Dockerfile                   CUDA 12.4 + Ubuntu 24.04 + ROS 2 Jazzy + Newton[전체]
-├── docker-compose.yml           GPU + X11 + network_mode:host + ROS env
-├── docker/entrypoint.sh         source /opt/ros/jazzy + exec
-├── .env.example                 기본값 스냅샷
-├── install.sh                   호스트 prereq 설치 (docker, compose, nvidia toolkit)
-├── build.sh / run.sh            이미지 빌드 / 컨테이너 제어
-├── sim_node.py                  ★ Newton + rclpy 단일 프로세스
-├── robots/                      ← pack = robot.yaml + urdf|mjcf (docs/ROBOTS.md)
-│   ├── ur5e/robot.yaml          6-DoF arm
-│   ├── franka/robot.yaml        7-DoF arm
-│   └── kuka_iiwa_14/robot.yaml  7-DoF arm
+├── README.md                      ← 여기
+├── pyproject.toml                 newton_bridge 패키지 메타 (editable install)
+├── .env.example                   기본값 스냅샷
+├── src/newton_bridge/             ★ Newton + rclpy 단일 프로세스 (모듈화)
+│   ├── __main__.py                `python -m newton_bridge` entry point
+│   ├── world.py                   NewtonWorld (ModelBuilder + solver)
+│   ├── node.py                    SimBridgeNode (rclpy pubs/subs/services)
+│   ├── robot_pack.py              robot.yaml loader
+│   └── viewer.py                  optional Newton GL viewer
+├── docker/                        Docker 전부
+│   ├── Dockerfile                 CUDA 12.9 + Ubuntu 24.04 + ROS 2 Jazzy + Newton[전체]
+│   ├── compose.yml                GPU + X11 + network_mode:host + ROS env
+│   └── entrypoint.sh              source /opt/ros/jazzy + exec
 ├── scripts/
-│   ├── fetch_assets.sh          URDF/MJCF 수급
-│   ├── verify.sh                컨테이너 내부 스모크
-│   ├── verify_ros.sh            호스트 ROS 2 연동 체크
-│   ├── controller_demo.py       sine-wave E2E 데모
-│   └── rl_smoketest.py          torch-cu12 검증
-├── workspace/                   호스트↔컨테이너 공유 (outputs, notebooks)
+│   ├── host/                      호스트에서 실행
+│   │   ├── install.sh             docker / compose / nvidia toolkit 설치
+│   │   ├── build.sh / run.sh      이미지 빌드 / 컨테이너 제어
+│   │   ├── fetch_assets.sh        URDF/MJCF 수급
+│   │   └── verify_ros.sh          호스트 ROS 2 연동 체크
+│   └── container/                 컨테이너 내부
+│       ├── verify.sh              스모크 테스트
+│       └── rl_smoketest.py        torch-cu12 검증
+├── examples/
+│   └── controller_demo.py         sine-wave E2E 데모
+├── robots/                        ← pack = robot.yaml + models/ (docs/ROBOTS.md)
+│   ├── ur5e/robot.yaml            6-DoF arm
+│   ├── franka/robot.yaml          7-DoF arm
+│   └── kuka_iiwa_14/robot.yaml    7-DoF arm
+├── tests/                         pytest (host-side unit tests)
+├── workspace/                     호스트↔컨테이너 공유 (outputs, notebooks)
+├── assets/_cache/                 fetch_assets.sh 의 상류 클론 (gitignored, ~2 GB)
 └── docs/
-    ├── SETUP.md
-    ├── ARCHITECTURE.md
-    └── TOPICS.md
+    ├── SETUP.md / ARCHITECTURE.md / TOPICS.md / ROBOTS.md
+    └── en/README.md               영문 요약
 ```
 
 ## 관련 문서
@@ -114,6 +127,7 @@ newton-bridge/
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 레이어 경계, sync 모델, 시간 모델
 - [docs/TOPICS.md](docs/TOPICS.md) — 토픽/서비스 계약, 확장 경로
 - [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가, URDF/xacro/MJCF 연동
+- [docs/en/README.md](docs/en/README.md) — 영문 요약
 - Newton 공식: <https://newton-physics.github.io/newton/latest/>
 
 ## sibling: sim-bridge

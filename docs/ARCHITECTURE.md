@@ -5,7 +5,7 @@
 | 레이어 | 위치 | 역할 |
 |---|---|---|
 | Newton Physics (Warp GPU) | 컨테이너 내부 Python 프로세스 | 물리 스텝, differentiable |
-| rclpy bridge | 동일 프로세스 (sim_node.py) | DDS 토픽/서비스 ↔ Newton state |
+| rclpy bridge | 동일 프로세스 (`newton_bridge` 패키지) | DDS 토픽/서비스 ↔ Newton state |
 | ROS 2 Jazzy | 호스트 (또는 다른 컨테이너) | 외부 custom controller |
 
 단일 프로세스가 `newton.Model` 과 `rclpy.Node` 를 동시에 보유해서, sim-bridge 의 "Isaac Sim extension + OmniGraph + rclpy sidechannel" 3중 레이어보다 훨씬 단순합니다.
@@ -15,13 +15,13 @@
 ```
 ┌─ Container (newton-bridge) ────────────────────────────────┐
 │                                                            │
-│   sim_node.py                                              │
-│     ├─ NewtonWorld                                         │
+│   python -m newton_bridge                                  │
+│     ├─ NewtonWorld      (src/newton_bridge/world.py)       │
 │     │    ├─ ModelBuilder + parse_urdf/mjcf                 │
 │     │    ├─ state_0, state_1 (double-buffer)               │
 │     │    └─ solver.step (XPBD | MuJoCo | Featherstone)     │
 │     │                                                      │
-│     └─ SimBridgeNode(rclpy.Node)                           │
+│     └─ SimBridgeNode    (src/newton_bridge/node.py)        │
 │          ├─ pub  /clock         rosgraph_msgs/Clock        │
 │          ├─ pub  /joint_states  sensor_msgs/JointState     │
 │          ├─ sub  /joint_command sensor_msgs/JointState     │
@@ -52,7 +52,7 @@
   2. `world.step()`.
   3. `/joint_states` + `/clock` 퍼블리시.
   4. `std_srvs/Trigger.Response(success=True, message="sim_time=...")` 반환.
-- 결정성(reproducibility) 우선. 다수 step 이 필요하면 루프로 콜 (`scripts/controller_demo.py --mode handshake` 참고).
+- 결정성(reproducibility) 우선. 다수 step 이 필요하면 루프로 콜 (`examples/controller_demo.py --mode handshake` 참고).
 - `/sim/reset` 은 home_pose 로 복귀 + 상태 1회 퍼블리시.
 
 ### Extension: multi-step srv (미구현)
@@ -78,13 +78,13 @@ sensor_msgs/JointState state
 |---|---|---|
 | `physics_hz` | 400Hz | `robot.yaml: sim.physics_hz` |
 | `substeps` | 1 | `robot.yaml: sim.substeps` (solver 안정성용) |
-| `/clock` | publish_rate_hz 에 동기 | sim_node.py |
-| `/joint_states` | 100Hz (freerun) / step 당 1회 (handshake) | sim_node.py |
+| `/clock` | publish_rate_hz 에 동기 | `newton_bridge.node` |
+| `/joint_states` | 100Hz (freerun) / step 당 1회 (handshake) | `newton_bridge.node` |
 | 호스트 `use_sim_time` | `/clock` 구독 | 호스트 launch/node 설정 |
 
 ## Robot pack 계약
 
-`robots/<name>/robot.yaml` 한 파일로 pack 정의. sim_node.py 는 로봇을 모른 채 pack 만 읽어 바인딩합니다.
+`robots/<name>/robot.yaml` 한 파일로 pack 정의. `newton_bridge` 패키지는 로봇을 모른 채 pack 만 읽어 바인딩합니다. 에셋은 `robots/<name>/models/` 아래에 둡니다 (URDF / MJCF 구분 없이 통일).
 
 ```yaml
 robot:
@@ -110,7 +110,7 @@ ros:
   publish_rate_hz: int
 ```
 
-에셋(URDF/MJCF/STL)은 gitignore. `scripts/fetch_assets.sh` 가 외부에서 끌어옴. 새 pack 을 추가하거나 외부 `*_description` 패키지(URDF/xacro/MJCF)를 붙이는 절차는 [ROBOTS.md](ROBOTS.md) 참조.
+에셋(URDF/MJCF/STL)은 gitignore. `scripts/host/fetch_assets.sh` 가 외부에서 끌어옴. 새 pack 을 추가하거나 외부 `*_description` 패키지(URDF/xacro/MJCF)를 붙이는 절차는 [ROBOTS.md](ROBOTS.md) 참조.
 
 ## 왜 이 설계인가
 
@@ -120,6 +120,6 @@ ros:
 
 ## 알려진 이슈
 
-- **Newton API 안정성**: Newton 1.x 는 빠르게 움직입니다. [sim_node.py](../sim_node.py) 의 `# -- NEWTON API SURFACE --` 블록이 수정 포인트. API 변경 시 그 블록만 고치면 나머지는 재활용.
-- **joint 이름 매핑**: Newton 의 `model.joint_name` / `model.joint_q_start` 는 importer 구현에 따라 URDF/MJCF 의 이름을 그대로 보존하거나 접두사를 붙일 수 있습니다. 미스매치 나면 `robot.yaml: joint_names` 를 실제 값에 맞춰 교정 (verify.sh 가 "joints in robot.yaml not found" 로 알려줌).
+- **Newton API 안정성**: Newton 1.x 는 빠르게 움직입니다. [src/newton_bridge/world.py](../src/newton_bridge/world.py) 의 `# -- NEWTON API SURFACE --` 블록이 수정 포인트. API 변경 시 그 블록만 고치면 나머지는 재활용.
+- **joint 이름 매핑**: Newton 의 `model.joint_name` / `model.joint_q_start` 는 importer 구현에 따라 URDF/MJCF 의 이름을 그대로 보존하거나 접두사를 붙일 수 있습니다. 미스매치 나면 `robot.yaml: joint_names` 를 실제 값에 맞춰 교정 (`scripts/container/verify.sh` 가 "joints in robot.yaml not found" 로 알려줌).
 - **MuJoCo solver + URDF**: URDF 는 actuator 블록이 없어서 `SolverMuJoCo` 와 곧바로 안 맞을 수 있음. URDF 는 `SolverXPBD` / `SolverFeatherstone` 로 쓰기를 권장 (pack 에 기본값 반영됨).
