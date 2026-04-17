@@ -1,0 +1,39 @@
+# UR5e — Universal Robots 6-DoF collaborative arm.
+# Source: ur_description (BSD-3). Copied in by scripts/fetch_assets.sh.
+
+robot:
+  source: urdf
+  source_rel: urdf/ur5e.urdf
+  base_position: [0.0, 0.0, 0.0]
+
+sim:
+  physics_hz: 400
+  substeps: 1
+  solver: xpbd           # xpbd | mujoco | featherstone
+  ground_plane: true
+
+joint_names:
+  - shoulder_pan_joint
+  - shoulder_lift_joint
+  - elbow_joint
+  - wrist_1_joint
+  - wrist_2_joint
+  - wrist_3_joint
+
+home_pose:
+  shoulder_pan_joint:  0.0
+  shoulder_lift_joint: -1.5708
+  elbow_joint:          1.5708
+  wrist_1_joint:       -1.5708
+  wrist_2_joint:       -1.5708
+  wrist_3_joint:        0.0
+
+drive:
+  mode: position
+  stiffness: 10000.0
+  damping: 100.0
+
+ros:
+  joint_states_topic:   /joint_states
+  joint_command_topic:  /joint_command
+  publish_rate_hz:      100

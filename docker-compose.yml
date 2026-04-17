@@ -1,0 +1,57 @@
+services:
+  newton-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: newton-bridge:latest
+    container_name: newton-bridge
+    runtime: nvidia
+    # network_mode: host is required for DDS discovery to reach host ROS 2.
+    # Trade-off: port mappings are ignored; Jupyter at host:8888 is already
+    # accessible because the container inherits the host netns directly.
+    network_mode: host
+    ipc: host
+    stdin_open: true
+    tty: true
+    # Match the host UID so bind-mounted output files are not root-owned.
+    # Override via `UID=$(id -u) GID=$(id -g) docker compose up`.
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - XAUTHORITY=/tmp/.Xauthority
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video,display
+      # -- ROS 2 DDS config -------------------------------------------------
+      - ROS_DISTRO=jazzy
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # FastDDS SHM transport breaks across UID boundaries; force UDPv4 on
+      # both container and host (export the same var in your host shell).
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+      # -- sim_node.py config ----------------------------------------------
+      - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
+      - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | handshake
+      - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
+      # -- Jupyter ----------------------------------------------------------
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-newton}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
+      - ./sim_node.py:/workspace/sim_node.py:ro
+      - ./robots:/workspace/robots:ro
+      - ./scripts:/workspace/scripts:ro
+      - ./workspace:/workspace/workspace:rw
+      # pip cache survives rebuilds
+      - newton-pip-cache:/home/user/.cache/pip
+    working_dir: /workspace
+
+volumes:
+  newton-pip-cache:
