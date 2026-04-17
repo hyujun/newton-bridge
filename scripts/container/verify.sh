@@ -25,7 +25,15 @@ print('newton', getattr(newton, '__version__', '<unknown>'))
 "
 
 banner "3. newton.examples registry"
-run "newton.examples list" python3 -m newton.examples --help >/dev/null
+# Newton 1.1.0 made the CLI take <example_name> positionally, so `-m newton.examples --help`
+# exits non-zero. Import the package and walk submodules instead — same registry, no CLI coupling.
+run "newton.examples discoverable" python3 -c "
+import pkgutil
+from newton import examples
+mods = [m.name for m in pkgutil.walk_packages(examples.__path__, examples.__name__ + '.')]
+assert mods, 'no newton example modules discovered'
+print(f'newton.examples: {len(mods)} modules discoverable')
+"
 
 banner "4. quick step on basic_pendulum"
 # Run a short headless step to confirm the sim path works end-to-end.
