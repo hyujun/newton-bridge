@@ -44,7 +44,6 @@ import yaml
 # -- Newton / Warp -----------------------------------------------------------
 import warp as wp
 import newton
-import newton.utils
 
 # -- ROS 2 -------------------------------------------------------------------
 import rclpy
@@ -98,20 +97,11 @@ class NewtonWorld:
         base_pos = self.pack["robot"].get("base_position", [0.0, 0.0, 0.0])
 
         builder = newton.ModelBuilder()
+        xform = wp.transform(base_pos, wp.quat_identity())
         if src_fmt == "urdf":
-            newton.utils.parse_urdf(
-                src_path,
-                builder,
-                xform=wp.transform(base_pos, wp.quat_identity()),
-                floating=False,
-            )
+            builder.add_urdf(src_path, xform=xform, floating=False)
         elif src_fmt == "mjcf":
-            newton.utils.parse_mjcf(
-                src_path,
-                builder,
-                xform=wp.transform(base_pos, wp.quat_identity()),
-                floating=False,
-            )
+            builder.add_mjcf(src_path, xform=xform, floating=False)
         else:
             raise ValueError(f"unknown robot.source: {src_fmt!r} (expected urdf|mjcf)")
 
@@ -250,10 +240,11 @@ class NewtonWorld:
 # ============================================================================
 
 class SimBridgeNode(Node):
-    def __init__(self, world: NewtonWorld, sync_mode: str) -> None:
+    def __init__(self, world: NewtonWorld, sync_mode: str, viewer=None) -> None:
         super().__init__("newton_bridge")
         self.world = world
         self.sync_mode = sync_mode
+        self.viewer = viewer
         self.pack = world.pack
 
         ros_cfg = self.pack["ros"]
@@ -302,6 +293,7 @@ class SimBridgeNode(Node):
         self._apply_latest_cmd()
         self.world.step()
         self._publish_state(force=True)
+        self._render_viewer()
         response.success = True
         response.message = f"sim_time={self.world.sim_time:.6f}"
         return response
@@ -311,6 +303,7 @@ class SimBridgeNode(Node):
         self._latest_cmd["names"] = None
         self._latest_cmd["positions"] = None
         self._publish_state(force=True)
+        self._render_viewer()
         response.success = True
         response.message = "reset to home_pose"
         return response
@@ -345,16 +338,29 @@ class SimBridgeNode(Node):
         self.pub_state.publish(msg)
         self._publish_clock()
 
+    def _render_viewer(self) -> None:
+        if self.viewer is None:
+            return
+        self.viewer.begin_frame(self.world.sim_time)
+        self.viewer.log_state(self.world.state_0)
+        self.viewer.end_frame()
+
     # -- freerun main loop --------------------------------------------------
     def run_freerun(self, rate_mode: str) -> None:
         realtime = rate_mode != "max"
         next_wall = time.monotonic()
         while rclpy.ok():
+            if self.viewer is not None and not self.viewer.is_running():
+                self.get_logger().info("viewer window closed; shutting down")
+                break
+            paused = self.viewer is not None and self.viewer.is_paused()
             rclpy.spin_once(self, timeout_sec=0.0)
-            self._apply_latest_cmd()
-            self.world.step()
-            self._publish_state(force=False)
-            if realtime:
+            if not paused:
+                self._apply_latest_cmd()
+                self.world.step()
+                self._publish_state(force=False)
+            self._render_viewer()
+            if realtime and not paused:
                 next_wall += self.world.physics_dt
                 sleep_for = next_wall - time.monotonic()
                 if sleep_for > 0:
@@ -362,6 +368,10 @@ class SimBridgeNode(Node):
                 else:
                     # fell behind; reset pacing reference
                     next_wall = time.monotonic()
+            elif paused:
+                # viewer pumps events in end_frame; throttle spin so we don't busy-loop
+                time.sleep(1.0 / 60.0)
+                next_wall = time.monotonic()
 
 
 # ============================================================================
@@ -374,6 +384,24 @@ def _resolve_pack_dir() -> Path:
     if not p.is_dir():
         raise FileNotFoundError(f"ROBOT_PACK not a directory: {p}")
     return p
+
+
+def _env_truthy(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_viewer(world: "NewtonWorld"):
+    """Construct newton.viewer.ViewerGL and bind it to the model.
+
+    Imported lazily so headless runs don't pay the GL import cost.
+    """
+    from newton.viewer import ViewerGL  # noqa: WPS433 (intentional local import)
+
+    width = int(os.environ.get("VIEWER_WIDTH", "1280"))
+    height = int(os.environ.get("VIEWER_HEIGHT", "720"))
+    viewer = ViewerGL(width=width, height=height, vsync=False)
+    viewer.set_model(world.model)
+    return viewer
 
 
 def main() -> int:
@@ -398,8 +426,28 @@ def main() -> int:
         flush=True,
     )
 
+    viewer = None
+    if _env_truthy("ENABLE_VIEWER"):
+        try:
+            viewer = _build_viewer(world)
+            print("[sim_node] GL viewer enabled (close window to stop sim)", flush=True)
+        except Exception as exc:  # noqa: BLE001 — surface viewer init failures clearly
+            print(
+                f"[sim_node] ENABLE_VIEWER=1 but viewer init failed: {exc!r}\n"
+                f"[sim_node] continuing headless. Check DISPLAY + xhost + nvidia GL.",
+                file=sys.stderr,
+                flush=True,
+            )
+            viewer = None
+        if viewer is not None and sync_mode == "handshake":
+            print(
+                "[sim_node] note: handshake mode renders only on /sim/step or /sim/reset; "
+                "the window will appear frozen until a controller calls those services.",
+                flush=True,
+            )
+
     rclpy.init(args=None)
-    node = SimBridgeNode(world, sync_mode)
+    node = SimBridgeNode(world, sync_mode, viewer=viewer)
 
     # graceful shutdown on SIGINT/SIGTERM (docker stop, Ctrl-C)
     def _sigint(*_):
@@ -414,6 +462,11 @@ def main() -> int:
         else:
             node.run_freerun(rate_mode)
     finally:
+        if viewer is not None:
+            try:
+                viewer.close()
+            except Exception:  # noqa: BLE001
+                pass
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

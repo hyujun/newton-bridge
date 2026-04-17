@@ -4,12 +4,14 @@
 #   - Ubuntu 24.04 (Noble) because ROS 2 Jazzy officially targets Noble and
 #     its Python 3.12 is already >= Newton's 3.11+ floor (guide §9: avoids
 #     the imgui_bundle issue seen on 3.10).
-#   - venv created with --system-site-packages so apt-installed python3-rclpy
+#   - venv created with --system-site-packages so apt-installed ros-jazzy-rclpy
 #     stays visible after 'source /opt/newton-venv/bin/activate'.
 #   - Entrypoint sources /opt/ros/jazzy/setup.bash before delegating to CMD.
 # =============================================================================
 
-FROM nvidia/cuda:12.4.1-runtime-ubuntu24.04
+# Ubuntu 24.04 only has 12.9.x and 13.x runtime tags published; 12.9.1 is the
+# closest match to the cu128 PyTorch wheels installed below (12.x ABI line).
+FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -46,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-std-msgs \
         ros-jazzy-rosgraph-msgs \
         ros-jazzy-geometry-msgs \
-        python3-rclpy \
+        ros-jazzy-rclpy \
         python3-colcon-common-extensions \
         python3-argcomplete \
         # Newton guide §4 — OpenGL / rendering deps (+ libgles2 for EGL headless §9)

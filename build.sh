@@ -10,8 +10,9 @@ if [[ "${1:-}" == "--no-cache" ]]; then
     NO_CACHE="--no-cache"
 fi
 
-export UID="${UID:-$(id -u)}"
-export GID="${GID:-$(id -g)}"
+# UID/GID are readonly in bash; use HOST_UID/HOST_GID for docker-compose.
+export HOST_UID="${HOST_UID:-$(id -u)}"
+export HOST_GID="${HOST_GID:-$(id -g)}"
 
 docker compose build ${NO_CACHE}
 

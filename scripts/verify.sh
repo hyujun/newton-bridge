@@ -35,9 +35,9 @@ run "newton.ModelBuilder finalize + 10 steps" python3 - <<'PY'
 import warp as wp, newton
 wp.init()
 b = newton.ModelBuilder()
-b.add_articulation()
-b.add_body(xform=wp.transform((0,0,1), wp.quat_identity()))
-b.add_joint_revolute(parent=-1, child=0, axis=(0,1,0))
+body = b.add_body(xform=wp.transform((0,0,1), wp.quat_identity()))
+joint = b.add_joint_revolute(parent=-1, child=body, axis=(0,1,0))
+b.add_articulation([joint])
 b.add_ground_plane()
 m = b.finalize()
 s0, s1 = m.state(), m.state()

@@ -28,9 +28,11 @@ fi
 : "${FREERUN_RATE:=realtime}"
 : "${ROS_DOMAIN_ID:=0}"
 : "${RMW_IMPLEMENTATION:=rmw_fastrtps_cpp}"
-export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION
-export UID="${UID:-$(id -u)}"
-export GID="${GID:-$(id -g)}"
+: "${ENABLE_VIEWER:=0}"
+export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION ENABLE_VIEWER
+# UID/GID are readonly in bash; use HOST_UID/HOST_GID for docker-compose.
+export HOST_UID="${HOST_UID:-$(id -u)}"
+export HOST_GID="${HOST_GID:-$(id -g)}"
 
 MODE="${1:-sim}"
 shift || true
@@ -83,6 +85,7 @@ env overrides:
   SYNC_MODE=freerun|handshake
   FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
+  ENABLE_VIEWER=0|1     open Newton GL viewer window (default: 0)
 EOF
         exit 1
         ;;

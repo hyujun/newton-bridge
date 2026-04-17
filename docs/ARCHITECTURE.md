@@ -110,7 +110,7 @@ ros:
   publish_rate_hz: int
 ```
 
-에셋(URDF/MJCF/STL)은 gitignore. `scripts/fetch_assets.sh` 가 외부에서 끌어옴.
+에셋(URDF/MJCF/STL)은 gitignore. `scripts/fetch_assets.sh` 가 외부에서 끌어옴. 새 pack 을 추가하거나 외부 `*_description` 패키지(URDF/xacro/MJCF)를 붙이는 절차는 [ROBOTS.md](ROBOTS.md) 참조.
 
 ## 왜 이 설계인가
 

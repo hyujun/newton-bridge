@@ -12,19 +12,27 @@
 ### 한 번만 실행
 
 ```bash
-# 1) NVIDIA driver 확인
+# 1) NVIDIA driver 확인 (install.sh 가 설치해주지 않음 — 호스트 담당)
 nvidia-smi           # CUDA Version: 12.4+
 
-# 2) Docker + NVIDIA Container Toolkit (sim-bridge 셋업 했다면 이미 되어 있음)
-#    설치 방법은 Newton 공식 가이드 §2 참조.
+# 2) Docker + compose v2 + NVIDIA Container Toolkit 자동 설치
+#    (sim-bridge 셋업 등으로 이미 깔려 있으면 스킵됨)
+./install.sh
+#    옵션: ./install.sh --only-check    # 현재 상태만 점검
+#          ./install.sh --no-nvidia     # GPU 있어도 toolkit 건너뜀
 
-# 3) ROS 2 Jazzy (호스트용)
+# 3) ROS 2 Jazzy (호스트용 — 컨테이너와 DDS 토픽 주고받을 용도)
 #    https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html
 sudo apt install ros-jazzy-ros-base
 
 # 4) GPU 컨테이너 동작 검증
 docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.0-base-ubuntu24.04 nvidia-smi
 ```
+
+> `install.sh` 가 하는 일은 **호스트 패키지 설치만** (docker-ce, docker-compose-plugin,
+> nvidia-container-toolkit + `nvidia-ctk runtime configure`). 에셋 다운로드 / 이미지
+> 빌드 / smoke test 는 아래 "저장소 셋업" 단계에서 따로 실행합니다. 신규 유저가
+> `docker` 그룹에 추가된 경우 **한 번 로그아웃/재로그인** 필요.
 
 ### 호스트 ROS 2 환경 변수
 

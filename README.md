@@ -26,11 +26,21 @@
 ## Quick start
 
 ```bash
+./install.sh                # 호스트 prereq 설치 (docker, compose v2, nvidia-container-toolkit)
 ./scripts/fetch_assets.sh   # mujoco_menagerie + ur5e URDF 다운로드
 ./build.sh                  # Docker 이미지 빌드 (5~15분)
 ./run.sh verify             # 컨테이너 스모크 테스트
-./run.sh sim                # ROBOT=ur5e, freerun, 기본
+./run.sh sim                # ROBOT=ur5e, freerun, 기본 (headless)
+ENABLE_VIEWER=1 ./run.sh sim   # 같은데 Newton GL viewer 창을 띄움
 ```
+
+> `install.sh` 는 **호스트에 Docker 구동 패키지만** 설치합니다 (이미지 빌드/에셋
+> 다운로드는 별개 단계). 이미 docker + nvidia toolkit 이 깔려 있으면 그냥
+> 건너뛰어도 됩니다. `./install.sh --only-check` 로 현재 상태만 점검 가능.
+
+> Viewer 는 X11 passthrough(이미 `docker-compose.yml` 에 wired) + nvidia GL
+> 드라이버가 필요합니다. 창을 닫으면 sim 도 종료됩니다. `handshake` 모드에서는
+> `/sim/step` / `/sim/reset` 호출 시점에만 프레임이 갱신됩니다.
 
 별도 터미널에서 (호스트):
 
@@ -50,6 +60,8 @@ python3 scripts/controller_demo.py --mode freerun --robot ur5e
 | `kuka_iiwa_14` | 7 | MJCF (mujoco_menagerie/kuka_iiwa_14) | mujoco |
 
 전환은 env var 하나: `ROBOT=kuka_iiwa_14 ./run.sh sim`.
+
+새 로봇 추가 또는 외부 `*_description` 패키지(URDF / xacro / MJCF) 연동은 [docs/ROBOTS.md](docs/ROBOTS.md) 참고.
 
 ## Sync modes
 
@@ -76,9 +88,10 @@ newton-bridge/
 ├── docker-compose.yml           GPU + X11 + network_mode:host + ROS env
 ├── docker/entrypoint.sh         source /opt/ros/jazzy + exec
 ├── .env.example                 기본값 스냅샷
+├── install.sh                   호스트 prereq 설치 (docker, compose, nvidia toolkit)
 ├── build.sh / run.sh            이미지 빌드 / 컨테이너 제어
 ├── sim_node.py                  ★ Newton + rclpy 단일 프로세스
-├── robots/
+├── robots/                      ← pack = robot.yaml + urdf|mjcf (docs/ROBOTS.md)
 │   ├── ur5e/robot.yaml          6-DoF arm
 │   ├── franka/robot.yaml        7-DoF arm
 │   └── kuka_iiwa_14/robot.yaml  7-DoF arm
@@ -100,6 +113,7 @@ newton-bridge/
 - [docs/SETUP.md](docs/SETUP.md) — 호스트 prereq, 최초 기동, DDS 설정
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 레이어 경계, sync 모델, 시간 모델
 - [docs/TOPICS.md](docs/TOPICS.md) — 토픽/서비스 계약, 확장 경로
+- [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가, URDF/xacro/MJCF 연동
 - Newton 공식: <https://newton-physics.github.io/newton/latest/>
 
 ## sibling: sim-bridge

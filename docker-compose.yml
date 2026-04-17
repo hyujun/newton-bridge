@@ -14,8 +14,9 @@ services:
     stdin_open: true
     tty: true
     # Match the host UID so bind-mounted output files are not root-owned.
-    # Override via `UID=$(id -u) GID=$(id -g) docker compose up`.
-    user: "${UID:-1000}:${GID:-1000}"
+    # build.sh / run.sh export HOST_UID/HOST_GID for you; override manually with
+    # `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up`.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       - DISPLAY=${DISPLAY:-:0}
       - XAUTHORITY=/tmp/.Xauthority
@@ -33,6 +34,13 @@ services:
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
       - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | handshake
       - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
+      # -- Optional Newton GL viewer ---------------------------------------
+      # ENABLE_VIEWER=1 opens a window via newton.viewer.ViewerGL. Requires
+      # X11 passthrough (already wired above) + nvidia GL (driver caps include
+      # graphics,display). Window close → sim_node exits.
+      - ENABLE_VIEWER=${ENABLE_VIEWER:-0}
+      - VIEWER_WIDTH=${VIEWER_WIDTH:-1280}
+      - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
       # -- Jupyter ----------------------------------------------------------
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-newton}
     deploy:
