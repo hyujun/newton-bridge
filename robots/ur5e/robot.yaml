@@ -9,7 +9,10 @@ robot:
 sim:
   physics_hz: 400
   substeps: 1
-  solver: xpbd           # xpbd | mujoco | featherstone
+  # SolverXPBD does not drive URDF joints via joint_target_pos in Newton
+  # 1.1.0 (reproduced: ke/kd/mode correct, but no torques applied). MuJoCo
+  # works with builder-level gain config — see world.py _configure_builder_drive.
+  solver: mujoco         # xpbd | mujoco | featherstone
   ground_plane: true
 
 joint_names:

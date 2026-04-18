@@ -68,13 +68,15 @@ from rosgraph_msgs.msg import Clock
 print('rclpy', rclpy.__version__ if hasattr(rclpy,'__version__') else 'ok')
 "
 
-banner "6. load every robot pack"
+banner "6. load every robot pack + drive responds to target"
 for pack in /workspace/robots/*/; do
     name="$(basename "${pack%/}")"
-    run "pack ${name} parses + finalizes" python3 - <<PY
+    run "pack ${name} parses + finalizes + drive moves" python3 - <<PY
 import os
 os.environ['ROBOT_PACK'] = "${pack%/}"
-# Just exercise the load path (parse -> finalize), not the ROS 2 loop.
+# Exercise load path and confirm PD drive actually moves a joint when a
+# target is commanded. Regression guard for the pre-1.1.0 joint_target /
+# joint_act confusion that left the arm frozen under /joint_command.
 import warp as wp; wp.init()
 from pathlib import Path
 from newton_bridge.robot_pack import load_pack
@@ -83,7 +85,17 @@ pack = load_pack(Path("${pack%/}"))
 world = NewtonWorld(pack)
 for _ in range(5):
     world.step()
-print(f"ok: dof={world.total_dof}, joints={len(world.joint_layout)}, t={world.sim_time:.4f}")
+
+first_joint = next(iter(world.joint_layout))
+q0 = world.read_joint_positions()[first_joint]
+world.set_joint_targets([first_joint], [q0 + 0.3])
+for _ in range(200):  # ~0.5s sim time at 400Hz
+    world.step()
+q1 = world.read_joint_positions()[first_joint]
+dq = abs(q1 - q0)
+assert dq > 0.05, f"{first_joint} did not respond: Δq={dq:.4f} rad (target offset 0.3)"
+print(f"ok: dof={world.total_dof}, joints={len(world.joint_layout)}, "
+      f"Δq({first_joint})={dq:.4f} rad, t={world.sim_time:.4f}")
 PY
 done
 

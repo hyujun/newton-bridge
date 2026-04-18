@@ -26,10 +26,11 @@ class NewtonWorld:
         self._build_model()
         self._build_solver()
         self._resolve_joint_layout()
-        self._apply_drive_gains()
         self._control_target_host = np.zeros(self.total_dof, dtype=np.float32)
         self.sim_time: float = 0.0
 
+        # builder.joint_q / joint_target_pos already put us at home, but
+        # mirror into _control_target_host + re-assert for reset() parity.
         self._apply_home_pose()
 
     # -- NEWTON API SURFACE -------------------------------------------------
@@ -41,7 +42,11 @@ class NewtonWorld:
         builder = newton.ModelBuilder()
         xform = wp.transform(base_pos, wp.quat_identity())
         if src_fmt == "urdf":
-            builder.add_urdf(src_path, xform=xform, floating=False)
+            # enable_self_collisions=False: URDF mesh colliders otherwise
+            # overflow the contact buffer (seen on UR5e) and freeze the step.
+            builder.add_urdf(
+                src_path, xform=xform, floating=False, enable_self_collisions=False
+            )
         elif src_fmt == "mjcf":
             builder.add_mjcf(src_path, xform=xform, floating=False)
         else:
@@ -50,10 +55,43 @@ class NewtonWorld:
         if self.pack["sim"].get("ground_plane", True):
             builder.add_ground_plane()
 
+        # Gains/mode/home must be written to the builder BEFORE finalize;
+        # post-finalize assigns to model.joint_target_ke/kd were no-ops in
+        # Newton 1.1.0 testing (the solver captures these at finalize time).
+        # This matches the panda_hydro example pattern.
+        self._configure_builder_drive(builder)
+
         self.model = builder.finalize(device=self.device)
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
+
+    # -- NEWTON API SURFACE -------------------------------------------------
+    def _configure_builder_drive(self, builder) -> None:
+        """Set per-DOF PD gains, POSITION mode, and home pose on the builder."""
+        ke = float(self.pack["drive"]["stiffness"])
+        kd = float(self.pack["drive"]["damping"])
+        pos_mode = int(newton.JointTargetMode.POSITION)
+        dof_count = int(builder.joint_dof_count)
+
+        for i in range(dof_count):
+            builder.joint_target_ke[i] = ke
+            builder.joint_target_kd[i] = kd
+            builder.joint_target_mode[i] = pos_mode
+
+        # Synthetic layout: yaml joint_names[i] -> DOF index i. Same mapping
+        # _resolve_joint_layout uses when model.joint_name is unavailable
+        # (true for URDF + MJCF in 1.1.0 — parser does not populate it).
+        home = self.pack.get("home_pose", {}) or {}
+        if not home:
+            return
+        configured = list(self.pack["joint_names"])
+        for i, name in enumerate(configured):
+            if i >= dof_count or name not in home:
+                continue
+            val = float(home[name])
+            builder.joint_q[i] = val
+            builder.joint_target_pos[i] = val
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_solver(self) -> None:
@@ -103,19 +141,6 @@ class NewtonWorld:
         self.joint_layout = {n: layout[n] for n in configured}
         self.total_dof = int(self.state_0.joint_q.shape[0])
 
-    # -- NEWTON API SURFACE -------------------------------------------------
-    def _apply_drive_gains(self) -> None:
-        """Set per-DOF PD gains from pack.drive.{stiffness,damping}."""
-        ke = float(self.pack["drive"]["stiffness"])
-        kd = float(self.pack["drive"]["damping"])
-
-        if hasattr(self.model, "joint_target_ke") and self.model.joint_target_ke is not None:
-            np_ke = np.full(self.model.joint_target_ke.shape, ke, dtype=np.float32)
-            np_kd = np.full(self.model.joint_target_kd.shape, kd, dtype=np.float32)
-            self.model.joint_target_ke.assign(np_ke)
-            self.model.joint_target_kd.assign(np_kd)
-        # else: solver (e.g. MuJoCo) took gains from the MJCF actuator block.
-
     def _apply_home_pose(self) -> None:
         home = self.pack.get("home_pose", {}) or {}
         if not home:
@@ -135,6 +160,11 @@ class NewtonWorld:
         self.state_0.joint_qd.zero_()
         self.state_1.joint_qd.zero_()
 
+        # Mirror home into the PD setpoint so reset() restores drive targets
+        # too — not just q.
+        self._control_target_host[:] = q
+        self.control.joint_target_pos.assign(self._control_target_host)
+
     # ----------------------------------------------------------------------
     def read_joint_positions(self) -> dict[str, float]:
         q = self.state_0.joint_q.numpy()
@@ -149,10 +179,9 @@ class NewtonWorld:
             start, _ = slot
             self._control_target_host[start] = float(pos)
         # -- NEWTON API SURFACE ---------------------------------------------
-        if hasattr(self.control, "joint_target") and self.control.joint_target is not None:
-            self.control.joint_target.assign(self._control_target_host)
-        elif hasattr(self.control, "joint_act") and self.control.joint_act is not None:
-            self.control.joint_act.assign(self._control_target_host)
+        # Newton 1.1.0: position setpoints live on control.joint_target_pos.
+        # joint_act is feedforward (additive), not a PD setpoint.
+        self.control.joint_target_pos.assign(self._control_target_host)
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def step(self) -> None:
@@ -167,6 +196,3 @@ class NewtonWorld:
     def reset(self) -> None:
         self.sim_time = 0.0
         self._apply_home_pose()
-        self._control_target_host[:] = 0.0
-        home = self.pack.get("home_pose", {}) or {}
-        self.set_joint_targets(home.keys(), home.values())
