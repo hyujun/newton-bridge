@@ -108,6 +108,32 @@ ROS 2 연동 없이 Newton 샘플 씬을 띄우고 싶을 때:
 # 브라우저로 http://localhost:8888/?token=newton
 ```
 
+## VSCode Container Tools 연동
+
+`ms-azuretools.vscode-containers` 확장이 사이드바에 아무것도 표시하지 않으면 대부분 **docker 소켓 권한** 문제입니다.
+
+```bash
+# 증상 확인 — permission denied 가 뜨면 그룹 누락
+docker ps
+# > permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
+
+# 해결 — 현재 유저를 docker 그룹에 추가
+sudo usermod -aG docker $USER
+newgrp docker        # 또는 로그아웃/재로그인
+docker ps            # sudo 없이 동작 확인
+
+# VSCode 완전 재시작 (창 reload 로는 env 재적용 안 됨)
+```
+
+> ⚠️ `docker` 그룹은 사실상 root 권한과 동등 (컨테이너로 호스트 FS 마운트 가능). 개인 워크스테이션에서는 표준 관행이지만 공용 호스트에서는 주의.
+
+스택이 떠 있어야 트리에 컨테이너가 보입니다:
+
+```bash
+./scripts/host/run.sh sim        # 또는
+docker compose -f docker/compose.yml up -d
+```
+
 ## 주의사항
 
 - **Python 3.10 불가**: Newton 가이드 §9 의 `imgui_bundle` 빌드 이슈 때문. 이 repo 는 Ubuntu 24.04 + Python 3.12 로 통일.
