@@ -164,7 +164,20 @@ ros:
 
 ---
 
-### Phase 3 — 전체 액추에이션 (Control 4채널) — ⏳ PENDING
+### Phase 3 — 전체 액추에이션 (Control 4채널) — ✅ COMPLETED
+
+**구현 노트**:
+- `parse_drive_mode` 퍼블릭 헬퍼: `position|velocity|effort|position_velocity|none` (대소문자 무관)
+- per-joint 오버라이드: `joints.<name>.drive.{mode,stiffness,damping}` + non-drive
+  scalar (`armature`, `effort_limit`, `velocity_limit`, `friction`, `limit_ke`, `limit_kd`)
+- DOF 이름은 빌더의 `joint_label` + `joint_dof_dim` 로부터 파생 (finalize 전).
+  1-DOF 조인트는 short label 그대로, multi-DOF 은 `<label>_<i>`.
+- `/joint_command` 세 필드 (`position`/`velocity`/`effort`) 모두 길이 == `name`
+  이면 반영, 빈 배열은 "건드리지 않음".
+- **솔버 호환성** (verify §7로는 미검증): XPBD는 target 채널 무시, MuJoCo는
+  `add_body`의 auto-joint 패턴 거부, Featherstone은 mass 없는 바디에서 NaN.
+  verify §7은 API wiring만 검증 (실제 motion은 verify §6의 MuJoCo/UR5e가 담당).
+
 
 **목적**: position 전용 PD에서 Newton의 4채널(pos/vel/effort + act feedforward) + per-joint drive param + URDF `<mimic>` 지원으로 확장.
 
@@ -388,7 +401,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | Phase | 상태 | 커밋 | 비고 |
 |---|---|---|---|
 | 0 | ✅ completed | 8427788 | API dump 확보 |
-| 1 | ⏳ pending | — | ArticulationView refactor — pattern in pack yaml |
+| 1 | ✅ completed | 64858ed | ArticulationView refactor — pattern in pack yaml |
 | 3 | ⏳ pending | — | 4-channel actuation + per-joint drive overrides |
 | 4 | ⏳ pending | — | JointState vel+effort + /tf default ON |
 | 2 | ⏳ pending | — | scene.yaml unification (robot.yaml auto-shim) |

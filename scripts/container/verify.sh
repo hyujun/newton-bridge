@@ -117,6 +117,86 @@ print(f"ok: dof={world.total_dof}, joints={len(world.joint_dof_names)}, "
 PY
 done
 
+banner "7. set_joint_targets wires all 3 channels (pos/vel/effort) into control"
+# Solver-level semantics vary per solver (XPBD ignores target channels for
+# manually-built joints, MuJoCo's topological_sort rejects the auto-joint
+# pattern add_body creates, Featherstone NaNs without mass). The reliable
+# check is API-wiring: NewtonWorld.set_joint_targets writes into
+# control.joint_target_pos / joint_target_vel / joint_f arrays.
+run "set_joint_targets writes all channels" python3 - <<'PY'
+import os, numpy as np
+os.environ['ROBOT_PACK'] = '/workspace/robots/ur5e'
+import warp as wp; wp.init()
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+
+pack = load_pack(Path(os.environ['ROBOT_PACK']))
+world = NewtonWorld(pack)
+j0 = world.exposed_joint_names[0]
+
+# POSITION
+world.set_joint_targets([j0], positions=[0.42])
+pos = world.control.joint_target_pos.numpy()
+i = world._dof_index[j0]
+assert abs(pos[i] - 0.42) < 1e-5, f"target_pos[{i}]={pos[i]}"
+
+# VELOCITY
+world.set_joint_targets([j0], velocities=[0.17])
+vel = world.control.joint_target_vel.numpy()
+assert abs(vel[i] - 0.17) < 1e-5, f"target_vel[{i}]={vel[i]}"
+
+# EFFORT
+world.set_joint_targets([j0], efforts=[3.5])
+eff = world.control.joint_f.numpy()
+assert abs(eff[i] - 3.5) < 1e-5, f"joint_f[{i}]={eff[i]}"
+
+# None-channel leaves previous values untouched.
+world.set_joint_targets([j0], positions=[0.99])  # efforts not set
+eff2 = world.control.joint_f.numpy()
+assert abs(eff2[i] - 3.5) < 1e-5, f"effort cleared unexpectedly: {eff2[i]}"
+print(f"ok: all 3 channels wired, dof={world.total_dof}")
+PY
+
+banner "8. per-joint drive override resolves correctly"
+run "per-joint drive override" python3 - <<'PY'
+from newton_bridge.world import parse_drive_mode
+import newton
+
+# top-level + override merge
+pack = {
+    "drive": {"mode": "position", "stiffness": 500.0, "damping": 50.0},
+    "joints": {
+        "shoulder_pan_joint": {
+            "drive": {"mode": "velocity", "damping": 5.0},
+            "effort_limit": 120.0,
+        },
+    },
+}
+
+class _DummyWorld:
+    pack = pack
+    _resolve_joint_drive = __import__("newton_bridge.world", fromlist=["NewtonWorld"]).NewtonWorld._resolve_joint_drive
+
+d = _DummyWorld()
+a = d._resolve_joint_drive("shoulder_pan_joint")
+assert a["mode"] == "velocity", a
+assert a["damping"] == 5.0, a
+assert a["stiffness"] == 500.0, a   # unspecified => inherits
+
+b = d._resolve_joint_drive("shoulder_lift_joint")
+assert b == {"mode": "position", "stiffness": 500.0, "damping": 50.0}, b
+
+# parse_drive_mode sanity
+assert int(parse_drive_mode("position")) == int(newton.JointTargetMode.POSITION)
+assert int(parse_drive_mode("VELOCITY")) == int(newton.JointTargetMode.VELOCITY)
+try:
+    parse_drive_mode("linear"); raise SystemExit("expected ValueError")
+except ValueError:
+    pass
+print("ok: drive override merge + mode parsing")
+PY
+
 banner "Summary"
 printf 'passed: %d   failed: %d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"

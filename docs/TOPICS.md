@@ -12,16 +12,41 @@
 
 ### Joint conventions
 
-- **단위**: position = radian (revolute). velocity / effort 는 읽기만 되며 현재 퍼블리시에는 position 만 채웁니다.
+- **단위**: position = radian (revolute), velocity = rad/s, effort = N·m.
 - **이름**: `robot.yaml: joint_names` 가 authoritative. 컨트롤러가 일부만 보내도 sim 은 매칭되는 것만 반영하고 나머지는 마지막 target 유지.
 - **효과 시점**: freerun 에서는 다음 `world.step()` 직전에 반영. handshake 에서는 `/sim/step` 콜 시점의 latest-wins.
+
+### `/joint_command` 4채널 해석
+
+`sensor_msgs/JointState` 의 `position` / `velocity` / `effort` 필드를 각각의 제어 채널로 매핑합니다. **비어 있는 배열은 "건드리지 않음"** 을 의미 (길이가 `name`과 일치해야 반영).
+
+| msg 필드 | Newton control | 작동 조건 |
+|---|---|---|
+| `position` | `control.joint_target_pos` | pack 의 joint mode 가 `position` 또는 `position_velocity` 일 때 PD 로 추종 |
+| `velocity` | `control.joint_target_vel` | mode 가 `velocity` 또는 `position_velocity` 일 때 PD 의 vel setpoint 로 사용 |
+| `effort` | `control.joint_f` | mode 가 `effort` 일 때 solver 가 직접 해당 토크를 적용 |
+
+pack 의 drive mode 는 joint 별로 다르게 설정할 수 있습니다 ([ROBOTS.md — per-joint drive](ROBOTS.md) 참조). 메시지에 세 필드를 동시에 실어 보내도 안전 — 해당 joint 의 mode 가 그 중 하나만 수용합니다.
 
 ### `/joint_command` 예시
 
 ```bash
+# position control
 ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState "
 name: ['shoulder_pan_joint']
 position: [0.5]
+"
+
+# velocity control
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState "
+name: ['shoulder_pan_joint']
+velocity: [0.2]
+"
+
+# effort (torque) control
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState "
+name: ['shoulder_pan_joint']
+effort: [5.0]
 "
 ```
 

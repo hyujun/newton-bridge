@@ -44,10 +44,24 @@ home_pose:                # reset 시 복귀 위치 (rad)
   joint_1:  0.0
   joint_2: -1.5708
 
-drive:
-  mode: position
-  stiffness: 10000.0
-  damping:    100.0
+drive:                   # top-level defaults applied to every actuated DOF
+  mode: position         # position | velocity | effort | position_velocity | none
+  stiffness: 10000.0     # target_ke (PD stiffness)
+  damping:    100.0      # target_kd (PD damping)
+
+# Optional per-joint overrides. Keys match any actuated DOF (exposed via
+# joint_names or not). Missing fields inherit from top-level `drive:`.
+# Non-drive scalars below (armature, effort_limit, velocity_limit, friction,
+# limit_ke, limit_kd) are pushed directly into the Newton builder joint slot.
+joints:
+  shoulder_pan_joint:
+    drive:
+      mode: velocity
+      damping: 5.0       # stiffness inherits 10000.0
+    effort_limit: 150.0
+    velocity_limit: 3.14
+    armature: 0.01
+    friction: 0.1
 
 ros:
   joint_states_topic:  /joint_states

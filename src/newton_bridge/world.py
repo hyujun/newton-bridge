@@ -15,6 +15,27 @@ import newton
 from newton.selection import ArticulationView
 
 
+# JointTargetMode name (yaml) -> enum. Accepted on pack['drive.mode'] and
+# pack['joints.<name>.drive.mode']. Case-insensitive at parse time.
+_DRIVE_MODE = {
+    "position": newton.JointTargetMode.POSITION,
+    "velocity": newton.JointTargetMode.VELOCITY,
+    "effort": newton.JointTargetMode.EFFORT,
+    "position_velocity": newton.JointTargetMode.POSITION_VELOCITY,
+    "none": newton.JointTargetMode.NONE,
+}
+
+
+def parse_drive_mode(name: str) -> newton.JointTargetMode:
+    try:
+        return _DRIVE_MODE[str(name).strip().lower()]
+    except KeyError:
+        raise ValueError(
+            f"unknown drive.mode: {name!r}. "
+            f"expected one of {sorted(_DRIVE_MODE.keys())}"
+        ) from None
+
+
 class NewtonWorld:
     """Thin wrapper: build model, hold solver + double-buffered state."""
 
@@ -27,11 +48,13 @@ class NewtonWorld:
         self._build_model()
         self._build_solver()
         self._build_view()
-        self._control_target_host = np.zeros(self.total_dof, dtype=np.float32)
+        self._control_target_pos_host = np.zeros(self.total_dof, dtype=np.float32)
+        self._control_target_vel_host = np.zeros(self.total_dof, dtype=np.float32)
+        self._control_effort_host = np.zeros(self.total_dof, dtype=np.float32)
         self.sim_time: float = 0.0
 
         # builder.joint_q / joint_target_pos already put us at home, but
-        # mirror into _control_target_host + re-assert for reset() parity.
+        # mirror into _control_target_pos_host + re-assert for reset() parity.
         self._apply_home_pose()
 
     # -- NEWTON API SURFACE -------------------------------------------------
@@ -59,7 +82,6 @@ class NewtonWorld:
         # Gains/mode/home must be written to the builder BEFORE finalize;
         # post-finalize assigns to model.joint_target_ke/kd were no-ops in
         # Newton 1.1.0 testing (the solver captures these at finalize time).
-        # This matches the panda_hydro example pattern.
         self._configure_builder_drive(builder)
 
         self.model = builder.finalize(device=self.device)
@@ -68,31 +90,92 @@ class NewtonWorld:
         self.control = self.model.control()
 
     # -- NEWTON API SURFACE -------------------------------------------------
+    def _dof_names_from_builder(self, builder) -> list[str]:
+        """Derive per-DOF short names from builder (pre-finalize; view unavailable).
+
+        For URDF/MJCF revolute/prismatic joints (1 DOF each) this returns the
+        joint's short label. Multi-DOF joints (D6/ball) get suffixed indices.
+        ArticulationView later yields the same names, allowing pack overrides
+        to be indexed by joint name.
+        """
+        names: list[str] = []
+        for j_idx, label in enumerate(builder.joint_label):
+            dims = builder.joint_dof_dim[j_idx]
+            total = int(dims[0]) + int(dims[1])
+            if total == 0:
+                continue
+            short = label.rsplit("/", 1)[-1]
+            if total == 1:
+                names.append(short)
+            else:
+                names.extend([f"{short}_{d}" for d in range(total)])
+        return names
+
+    def _resolve_joint_drive(self, joint_name: str) -> dict:
+        """Merge top-level drive with per-joint override in pack yaml."""
+        default = dict(self.pack.get("drive", {}) or {})
+        override = (self.pack.get("joints", {}) or {}).get(joint_name, {}) or {}
+        out = {
+            "mode": default.get("mode", "position"),
+            "stiffness": float(default.get("stiffness", 0.0)),
+            "damping": float(default.get("damping", 0.0)),
+        }
+        joint_drive = override.get("drive") or {}
+        if "mode" in joint_drive:
+            out["mode"] = joint_drive["mode"]
+        if "stiffness" in joint_drive:
+            out["stiffness"] = float(joint_drive["stiffness"])
+        if "damping" in joint_drive:
+            out["damping"] = float(joint_drive["damping"])
+        # Non-drive per-joint scalars (armature, effort_limit, ...) are read
+        # directly from `override` by _configure_builder_drive.
+        return out
+
+    # -- NEWTON API SURFACE -------------------------------------------------
     def _configure_builder_drive(self, builder) -> None:
-        """Set per-DOF PD gains, POSITION mode, and home pose on the builder."""
-        ke = float(self.pack["drive"]["stiffness"])
-        kd = float(self.pack["drive"]["damping"])
-        pos_mode = int(newton.JointTargetMode.POSITION)
+        """Apply drive/mode/limit params per DOF; then home pose.
+
+        Sources are merged in priority order: per-joint override (pack's
+        `joints.<name>.*`) overlays top-level `drive.*` defaults.
+        """
+        dof_names = self._dof_names_from_builder(builder)
+        joints_override = self.pack.get("joints", {}) or {}
         dof_count = int(builder.joint_dof_count)
 
-        for i in range(dof_count):
-            builder.joint_target_ke[i] = ke
-            builder.joint_target_kd[i] = kd
-            builder.joint_target_mode[i] = pos_mode
+        for i, name in enumerate(dof_names):
+            if i >= dof_count:
+                break
+            drive = self._resolve_joint_drive(name)
+            builder.joint_target_ke[i] = drive["stiffness"]
+            builder.joint_target_kd[i] = drive["damping"]
+            builder.joint_target_mode[i] = int(parse_drive_mode(drive["mode"]))
 
-        # Synthetic layout for home pose: pack's joint_names[i] -> DOF index i.
-        # This matches the order ArticulationView.joint_dof_names will expose
-        # after finalize, so resetting is consistent.
+            over = joints_override.get(name, {}) or {}
+            if "armature" in over:
+                builder.joint_armature[i] = float(over["armature"])
+            if "effort_limit" in over:
+                builder.joint_effort_limit[i] = float(over["effort_limit"])
+            if "velocity_limit" in over:
+                builder.joint_velocity_limit[i] = float(over["velocity_limit"])
+            if "friction" in over:
+                builder.joint_friction[i] = float(over["friction"])
+            if "limit_ke" in over:
+                builder.joint_limit_ke[i] = float(over["limit_ke"])
+            if "limit_kd" in over:
+                builder.joint_limit_kd[i] = float(over["limit_kd"])
+
+        # Home pose: pack-exposed name -> DOF index (via name lookup), not
+        # positional. This tolerates pack subset ordering.
         home = self.pack.get("home_pose", {}) or {}
-        if not home:
-            return
-        configured = list(self.pack["joint_names"])
-        for i, name in enumerate(configured):
-            if i >= dof_count or name not in home:
-                continue
-            val = float(home[name])
-            builder.joint_q[i] = val
-            builder.joint_target_pos[i] = val
+        if home:
+            name_to_i = {n: i for i, n in enumerate(dof_names)}
+            for name, val in home.items():
+                i = name_to_i.get(name)
+                if i is None or i >= dof_count:
+                    continue
+                val_f = float(val)
+                builder.joint_q[i] = val_f
+                builder.joint_target_pos[i] = val_f
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_solver(self) -> None:
@@ -110,11 +193,9 @@ class NewtonWorld:
     def _build_view(self) -> None:
         """Create an ArticulationView for name-based DOF/link access.
 
-        The pattern is an fnmatch glob (not regex) that matches against
+        The pattern is an fnmatch glob (not regex) matched against
         `model.articulation_label[*]`. Default `*` picks up every
-        articulation in the model (fine for single-robot packs). A pack can
-        override via `articulation_pattern:` to select a specific
-        articulation when multiple are loaded.
+        articulation in the model (fine for single-robot packs).
         """
         pattern = str(self.pack.get("articulation_pattern", "*"))
         self.view = ArticulationView(self.model, pattern=pattern)
@@ -122,9 +203,6 @@ class NewtonWorld:
         dof_names: list[str] = list(self.view.joint_dof_names)
         configured: list[str] = list(self.pack["joint_names"])
 
-        # Pack's joint_names is the ROS contract — a subset of what the model
-        # actually simulates. Extras (e.g. unexposed gripper fingers) are fine
-        # and remain at home_pose / 0. Missing names are fatal.
         view_set = set(dof_names)
         missing = [n for n in configured if n not in view_set]
         if missing:
@@ -136,11 +214,9 @@ class NewtonWorld:
                 f"  pattern:    {pattern!r}"
             )
 
-        self.joint_dof_names: list[str] = dof_names  # full view order
-        self.exposed_joint_names: list[str] = configured  # ROS contract subset
+        self.joint_dof_names: list[str] = dof_names
+        self.exposed_joint_names: list[str] = configured
         self.total_dof: int = int(self.view.joint_dof_count)
-        # dof-name -> flat index over the full view (covers both exposed and
-        # unexposed joints, so set_joint_targets can address any of them).
         self._dof_index: dict[str, int] = {n: i for i, n in enumerate(dof_names)}
 
     def _apply_home_pose(self) -> None:
@@ -148,7 +224,6 @@ class NewtonWorld:
         if not home:
             return
 
-        # Build full-dof array in the view's order; unspecified joints stay 0.
         q = np.zeros(self.total_dof, dtype=np.float32)
         for name, val in home.items():
             i = self._dof_index.get(name)
@@ -156,39 +231,69 @@ class NewtonWorld:
                 continue
             q[i] = float(val)
 
-        # ArticulationView.set_dof_positions expects shape
-        # (n_worlds, n_arts_per_world, dof_count). For our single-art case
-        # that's (1, 1, total_dof).
         shaped = q.reshape(1, 1, self.total_dof)
         self.view.set_dof_positions(self.state_0, shaped)
         self.view.set_dof_positions(self.state_1, shaped)
         self.state_0.joint_qd.zero_()
         self.state_1.joint_qd.zero_()
 
-        # Mirror home into the PD setpoint so reset() restores drive targets
-        # too — not just q.
-        self._control_target_host[:] = q
-        self.control.joint_target_pos.assign(self._control_target_host)
+        self._control_target_pos_host[:] = q
+        self._control_target_vel_host[:] = 0.0
+        self._control_effort_host[:] = 0.0
+        self.control.joint_target_pos.assign(self._control_target_pos_host)
+        self.control.joint_target_vel.assign(self._control_target_vel_host)
+        self.control.joint_f.assign(self._control_effort_host)
 
     # ----------------------------------------------------------------------
     def read_joint_positions(self) -> dict[str, float]:
-        """Return {pack-exposed joint name: position}. Extras are hidden."""
-        # ArticulationView returns wp.array of shape
-        # (n_worlds, n_arts_per_world, dof_count). Single-art pack: flatten.
         q = self.view.get_dof_positions(self.state_0).numpy().reshape(-1)
         return {n: float(q[self._dof_index[n]]) for n in self.exposed_joint_names}
 
-    def set_joint_targets(self, names: Iterable[str], positions: Iterable[float]) -> None:
-        """Write position targets into control. Unknown names are silently ignored."""
-        for name, pos in zip(names, positions):
-            i = self._dof_index.get(name)
-            if i is None:
-                continue
-            self._control_target_host[i] = float(pos)
-        # -- NEWTON API SURFACE ---------------------------------------------
-        # Newton 1.1.0: position setpoints live on control.joint_target_pos.
-        # joint_act is feedforward (additive), not a PD setpoint.
-        self.control.joint_target_pos.assign(self._control_target_host)
+    def read_joint_velocities(self) -> dict[str, float]:
+        qd = self.view.get_dof_velocities(self.state_0).numpy().reshape(-1)
+        return {n: float(qd[self._dof_index[n]]) for n in self.exposed_joint_names}
+
+    def read_joint_efforts(self) -> dict[str, float]:
+        # state.joint_f is the torque the solver applied. get_dof_forces reads it.
+        f = self.view.get_dof_forces(self.state_0).numpy().reshape(-1)
+        return {n: float(f[self._dof_index[n]]) for n in self.exposed_joint_names}
+
+    def set_joint_targets(
+        self,
+        names: Iterable[str],
+        positions: Iterable[float] | None = None,
+        velocities: Iterable[float] | None = None,
+        efforts: Iterable[float] | None = None,
+    ) -> None:
+        """Write command channels. Any of pos/vel/effort may be None to leave untouched.
+
+        The joint's configured `drive.mode` determines which channel actually
+        drives it; extra channels are stored but inert. Unknown joint names
+        are silently ignored.
+        """
+        names = list(names)
+        if positions is not None:
+            for name, v in zip(names, positions):
+                i = self._dof_index.get(name)
+                if i is not None:
+                    self._control_target_pos_host[i] = float(v)
+            # -- NEWTON API SURFACE ---------------------------------------
+            # Newton 1.1.0: POSITION setpoints live on control.joint_target_pos.
+            self.control.joint_target_pos.assign(self._control_target_pos_host)
+        if velocities is not None:
+            for name, v in zip(names, velocities):
+                i = self._dof_index.get(name)
+                if i is not None:
+                    self._control_target_vel_host[i] = float(v)
+            self.control.joint_target_vel.assign(self._control_target_vel_host)
+        if efforts is not None:
+            for name, v in zip(names, efforts):
+                i = self._dof_index.get(name)
+                if i is not None:
+                    self._control_effort_host[i] = float(v)
+            # joint_f is commanded torque; joint_act is additive feedforward.
+            # For EFFORT mode, writing joint_f is the intended channel.
+            self.control.joint_f.assign(self._control_effort_host)
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def step(self) -> None:

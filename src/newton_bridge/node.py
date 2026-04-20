@@ -39,8 +39,15 @@ class SimBridgeNode(Node):
         self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
         self._pub_interval: float = 1.0 / self._publish_rate_hz
 
-        # latest command (mutable; callback writes, main loop reads)
-        self._latest_cmd: dict = {"names": None, "positions": None}
+        # latest command (mutable; callback writes, main loop reads).
+        # Any of positions/velocities/efforts may be None (= field was empty
+        # on the incoming JointState and should be left untouched).
+        self._latest_cmd: dict = {
+            "names": None,
+            "positions": None,
+            "velocities": None,
+            "efforts": None,
+        }
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -73,7 +80,14 @@ class SimBridgeNode(Node):
     # -- topic callbacks ----------------------------------------------------
     def _on_cmd(self, msg: JointState) -> None:
         self._latest_cmd["names"] = list(msg.name)
-        self._latest_cmd["positions"] = list(msg.position)
+        # Each field is only forwarded if the publisher populated it — empty
+        # arrays mean "do not drive this channel this tick". Length mismatches
+        # (other than empty) are passed through; set_joint_targets iterates
+        # with zip so extras are truncated.
+        n = len(msg.name)
+        self._latest_cmd["positions"] = list(msg.position) if len(msg.position) == n else None
+        self._latest_cmd["velocities"] = list(msg.velocity) if len(msg.velocity) == n else None
+        self._latest_cmd["efforts"] = list(msg.effort) if len(msg.effort) == n else None
 
     # -- service callbacks (handshake) --------------------------------------
     def _on_step(self, request, response):
@@ -97,11 +111,23 @@ class SimBridgeNode(Node):
 
     # -- helpers ------------------------------------------------------------
     def _apply_latest_cmd(self) -> None:
-        positions = self._latest_cmd["positions"]
-        if positions is None:
+        names = self._latest_cmd["names"]
+        if names is None:
             return
-        self.world.set_joint_targets(self._latest_cmd["names"], positions)
+        if any(
+            self._latest_cmd[k] is not None for k in ("positions", "velocities", "efforts")
+        ):
+            self.world.set_joint_targets(
+                names,
+                positions=self._latest_cmd["positions"],
+                velocities=self._latest_cmd["velocities"],
+                efforts=self._latest_cmd["efforts"],
+            )
+        # Consume: clear so we don't re-apply stale commands next tick.
+        self._latest_cmd["names"] = None
         self._latest_cmd["positions"] = None
+        self._latest_cmd["velocities"] = None
+        self._latest_cmd["efforts"] = None
 
     def _publish_clock(self) -> None:
         sec = int(self.world.sim_time)
