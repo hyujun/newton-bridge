@@ -10,6 +10,7 @@
 | pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (handshake) | Reliable, depth=10 | `name` 순서는 `robot.yaml: joint_names`. position/velocity/effort 3필드 모두 채움 |
 | pub | `/tf` | `tf2_msgs/TFMessage` | `/joint_states` 와 동일 시점 | Reliable, depth=10 | `ros.publish_tf` (default `true`) 로 on/off. 각 body 를 `tf_root_frame` 의 child 로 퍼블리시 |
 | sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position/velocity/effort 필드 각각 드라이브 채널로 매핑 (아래 §) |
+| sub | `/sim/set_gravity` | `geometry_msgs/Vector3` | latest-wins | Reliable, depth=10 | 런타임 gravity 변경; Phase 6a. 단위 m/s² |
 
 ### Joint conventions
 

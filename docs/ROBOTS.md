@@ -29,7 +29,9 @@ robots/<name>/
 sim:
   physics_hz: 400
   substeps: 1
-  solver: mujoco          # xpbd | mujoco | featherstone
+  solver: mujoco          # xpbd | mujoco | featherstone | semi_implicit | style3d | vbd
+  solver_params:          # optional: forwarded as **kwargs to the solver ctor
+    iterations: 100       #   (Phase 6a) keys/values depend on the chosen solver
   ground_plane: true
   gravity: [0, 0, -9.81]
 

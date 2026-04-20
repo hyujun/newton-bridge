@@ -265,6 +265,44 @@ print('ok: null viewer end-to-end')
 PY
 "
 
+banner "11. sim.solver_params pass-through + set_gravity"
+run "solver_params + set_gravity" python3 - <<'PY'
+import os, numpy as np
+os.environ['ROBOT_PACK'] = '/workspace/robots/ur5e'
+import warp as wp; wp.init()
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+
+pack = load_pack(Path(os.environ['ROBOT_PACK']))
+
+# Switch to XPBD + unusual kwargs to exercise the pass-through path.
+pack["sim"]["solver"] = "xpbd"
+pack["sim"]["solver_params"] = {"iterations": 5, "angular_damping": 0.1}
+w = NewtonWorld(pack)
+# Poke attrs we know XPBD stores (best-effort; not all kwargs are exposed).
+assert hasattr(w.solver, "device")
+
+# Invalid kwarg must raise a clean ValueError, not TypeError.
+pack_bad = load_pack(Path(os.environ['ROBOT_PACK']))
+pack_bad["sim"]["solver"] = "xpbd"
+pack_bad["sim"]["solver_params"] = {"totally_not_a_real_kwarg": 42}
+try:
+    NewtonWorld(pack_bad)
+    raise SystemExit("expected ValueError for bad solver kwarg")
+except ValueError as e:
+    assert "solver_params" in str(e), e
+
+# set_gravity: change to zero and confirm model.gravity reflects it.
+w.set_gravity((0.0, 0.0, 0.0))
+g = w.model.gravity.numpy().reshape(-1)
+assert np.allclose(g, [0.0, 0.0, 0.0]), g
+w.set_gravity((0.0, 0.0, -9.81))
+g = w.model.gravity.numpy().reshape(-1)
+assert np.allclose(g, [0.0, 0.0, -9.81]), g
+print("ok: solver_params pass-through + gravity mutation")
+PY
+
 banner "Summary"
 printf 'passed: %d   failed: %d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"

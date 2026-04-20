@@ -180,15 +180,35 @@ class NewtonWorld:
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_solver(self) -> None:
-        solver_name = self.pack["sim"].get("solver", "xpbd").lower()
-        if solver_name == "xpbd":
-            self.solver = newton.solvers.SolverXPBD(self.model)
-        elif solver_name == "mujoco":
-            self.solver = newton.solvers.SolverMuJoCo(self.model)
-        elif solver_name == "featherstone":
-            self.solver = newton.solvers.SolverFeatherstone(self.model)
-        else:
-            raise ValueError(f"unknown solver: {solver_name!r}")
+        sim_cfg = self.pack["sim"]
+        solver_name = sim_cfg.get("solver", "xpbd").lower()
+        kwargs = dict(sim_cfg.get("solver_params", {}) or {})
+
+        solver_map = {
+            "xpbd": newton.solvers.SolverXPBD,
+            "mujoco": newton.solvers.SolverMuJoCo,
+            "featherstone": newton.solvers.SolverFeatherstone,
+            "semi_implicit": newton.solvers.SolverSemiImplicit,
+            "style3d": newton.solvers.SolverStyle3D,
+            "vbd": newton.solvers.SolverVBD,
+        }
+        cls = solver_map.get(solver_name)
+        if cls is None:
+            raise ValueError(
+                f"unknown solver: {solver_name!r}. "
+                f"expected one of {sorted(solver_map.keys())}"
+            )
+        try:
+            self.solver = cls(self.model, **kwargs)
+        except TypeError as exc:
+            raise ValueError(
+                f"solver {solver_name!r} rejected solver_params={kwargs!r}: {exc}"
+            ) from None
+
+    def set_gravity(self, gravity: tuple[float, float, float]) -> None:
+        """Runtime gravity change (Phase 6a). Wraps model.set_gravity(vec3)."""
+        g = [float(gravity[0]), float(gravity[1]), float(gravity[2])]
+        self.model.set_gravity(g)
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_view(self) -> None:

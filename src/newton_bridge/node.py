@@ -22,7 +22,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState, Imu
 from rosgraph_msgs.msg import Clock
 from std_srvs.srv import Trigger
-from geometry_msgs.msg import TransformStamped, WrenchStamped
+from geometry_msgs.msg import TransformStamped, Vector3, WrenchStamped
 from tf2_msgs.msg import TFMessage
 
 from .world import NewtonWorld
@@ -76,6 +76,10 @@ class SimBridgeNode(Node):
         self.sub_cmd = self.create_subscription(
             JointState, ros_cfg["joint_command_topic"], self._on_cmd, qos
         )
+        # Phase 6a: runtime gravity change via topic (Trigger can't carry vec).
+        self.sub_gravity = self.create_subscription(
+            Vector3, "/sim/set_gravity", self._on_set_gravity, qos
+        )
         self.pub_tf = (
             self.create_publisher(TFMessage, "/tf", qos)
             if self._publish_tf_enabled
@@ -113,6 +117,10 @@ class SimBridgeNode(Node):
         self._last_pub_wall: float = 0.0
 
     # -- topic callbacks ----------------------------------------------------
+    def _on_set_gravity(self, msg: Vector3) -> None:
+        self.world.set_gravity((msg.x, msg.y, msg.z))
+        self.get_logger().info(f"gravity -> ({msg.x}, {msg.y}, {msg.z})")
+
     def _on_cmd(self, msg: JointState) -> None:
         self._latest_cmd["names"] = list(msg.name)
         # Each field is only forwarded if the publisher populated it — empty

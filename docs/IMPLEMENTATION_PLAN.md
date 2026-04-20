@@ -332,7 +332,17 @@ sensors:
 
 ---
 
-### Phase 6a — 솔버 튜닝 표면 + runtime env — ⏳ PENDING
+### Phase 6a — 솔버 튜닝 표면 + runtime env — ✅ COMPLETED
+
+**구현 노트**:
+- `sim.solver_params:` 딕셔너리 → solver constructor 로 `**kwargs` 전달.
+- 솔버 매핑 확장: XPBD / MuJoCo / Featherstone / SemiImplicit / Style3D / VBD.
+  ImplicitMPM, Kamino 는 `Config` 객체 필요해서 Phase 6b 이관.
+- bad kwarg → clean `ValueError` (TypeError intercept).
+- runtime gravity: `/sim/set_gravity` topic (`geometry_msgs/Vector3`, latest-wins).
+  service 가 아닌 topic 이유: Trigger 가 payload 못 실어서.
+- deformable (cloth/soft/particle) 은 out-of-scope — Phase 6b.
+
 
 **목적**: 모든 Solver\*의 생성자 kwargs 를 pack yaml로 pass-through. `/sim/set_gravity` 서비스 추가.
 
@@ -449,7 +459,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | 4 | ✅ completed | 9c733ee | JointState vel+effort + /tf default ON |
 | 2 | ✅ completed | a7b0a80 | scene.yaml unification (robot.yaml auto-shim) |
 | 5 | ✅ completed | 8c9e110 | Contact + IMU sensors (standard msgs) |
-| 7 | ⏳ pending | — | Viewer factory + Rerun default |
+| 7 | ✅ completed | b793d56 | Viewer factory + Rerun default |
 | 6a | ⏳ pending | — | solver_params + /sim/set_gravity |
 
 **완료 정의**: 해당 phase의 unit test + verify.sh 관련 섹션이 모두 통과.
