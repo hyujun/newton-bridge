@@ -52,7 +52,7 @@ def main() -> int:
     world = NewtonWorld(pack)
     print(
         f"[newton_bridge] world ready: dof={world.total_dof}, "
-        f"joints={len(world.joint_layout)}, dt={world.physics_dt:.6f}s, "
+        f"joints={len(world.joint_dof_names)}, dt={world.physics_dt:.6f}s, "
         f"solver={pack['sim'].get('solver', 'xpbd')}",
         flush=True,
     )

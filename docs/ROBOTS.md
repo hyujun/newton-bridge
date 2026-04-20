@@ -53,7 +53,14 @@ ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
   publish_rate_hz:     100
+
+# Optional. fnmatch glob against model.articulation_label. Defaults to "*"
+# which matches every articulation. Override when multiple robots share the
+# same model and you want this pack to bind to only one of them.
+articulation_pattern: "*"
 ```
+
+`joint_names` 는 `/joint_states` / `/joint_command` 로 **노출할** 관절 목록입니다 (ROS 계약). Newton 이 파싱한 실제 DOF 는 더 많을 수 있습니다 — 예: franka 의 `finger_joint1/2` 는 pack 에서 빼면 시뮬레이션은 되지만 ROS 에는 나타나지 않습니다. 없는 joint 를 명시하면 fatal 이고, 순서는 ROS 메시지의 authoritative 순서입니다.
 
 스키마 정의는 [ARCHITECTURE.md](ARCHITECTURE.md#robot-pack-계약), 실제 예시는 [robots/ur5e/robot.yaml](../robots/ur5e/robot.yaml), [robots/franka/robot.yaml](../robots/franka/robot.yaml), [robots/kuka_iiwa_14/robot.yaml](../robots/kuka_iiwa_14/robot.yaml).
 

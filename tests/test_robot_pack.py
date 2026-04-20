@@ -31,3 +31,11 @@ def test_pack_parses(name: str) -> None:
 def test_missing_pack_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_pack(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["ur5e", "franka", "kuka_iiwa_14"])
+def test_articulation_pattern_optional(name: str) -> None:
+    """Phase 1: articulation_pattern is an optional pack field; default `.*`."""
+    cfg = load_pack(ROBOTS / name)
+    pattern = cfg.get("articulation_pattern", ".*")
+    assert isinstance(pattern, str) and pattern, "articulation_pattern must be a non-empty string"

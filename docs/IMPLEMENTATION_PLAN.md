@@ -58,6 +58,15 @@
 
 ### Phase 1 — ArticulationView 기반 리팩터 (foundation) — ✅ COMPLETED
 
+**구현 노트**:
+- `articulation_pattern` 은 **fnmatch glob** (regex 아님). 기본값 `"*"` (모든 articulation).
+- 팩의 `joint_names` 는 **ROS 노출 서브셋** — 시뮬은 전체 DOF, ROS 는 선언된 것만.
+  (franka finger_joint1/2 같은 미노출 DOF 시뮬 지속을 위함)
+- `view.get_dof_positions(state)` 는 `wp.array` (shape `(n_worlds, n_arts, dof)`) →
+  `.numpy().reshape(-1)` 로 평탄화.
+- `view.set_dof_positions(state, arr)` 는 numpy `(1, 1, dof)` 도 그대로 수용.
+
+
 **목적**: `world.py`의 수동 joint_layout 인덱싱을 제거하고 `newton.selection.ArticulationView`로 교체. 모든 후속 phase의 기반이 됨.
 
 **결정 A 반영**: pack yaml에 `articulation_pattern` 선택 필드 노출. 미지정 시 `".*"`(전체 매칭).
@@ -97,7 +106,7 @@
 
 ---
 
-### Phase 2 — Scene.yaml multi-world / multi-articulation — ✅ COMPLETED
+### Phase 2 — Scene.yaml multi-world / multi-articulation — ⏳ PENDING
 
 **목적**: 단일 로봇 `robot.yaml`을 `scene.yaml`로 자연스럽게 확장. Newton의 `begin_world/end_world` + `add_world` primitive에 1:1 매핑.
 
@@ -155,7 +164,7 @@ ros:
 
 ---
 
-### Phase 3 — 전체 액추에이션 (Control 4채널) — ✅ COMPLETED
+### Phase 3 — 전체 액추에이션 (Control 4채널) — ⏳ PENDING
 
 **목적**: position 전용 PD에서 Newton의 4채널(pos/vel/effort + act feedforward) + per-joint drive param + URDF `<mimic>` 지원으로 확장.
 
@@ -202,7 +211,7 @@ joints:
 
 ---
 
-### Phase 4 — Rich joint_states + /tf — ✅ COMPLETED
+### Phase 4 — Rich joint_states + /tf — ⏳ PENDING
 
 **목적**: `/joint_states` 3필드(position+velocity+effort) 채우고, 링크 프레임을 `/tf` 로 publish.
 
@@ -237,7 +246,7 @@ kill $PID 2>/dev/null
 
 ---
 
-### Phase 5 — Contact / IMU 센서 — ✅ COMPLETED
+### Phase 5 — Contact / IMU 센서 — ⏳ PENDING
 
 **목적**: `SensorContact` → `/contact_wrenches`, `SensorIMU` → `/imu/<site>`. 모두 **표준 msg**만 사용 (결정 E).
 
@@ -275,7 +284,7 @@ sensors:
 
 ---
 
-### Phase 6a — 솔버 튜닝 표면 + runtime env — ✅ COMPLETED
+### Phase 6a — 솔버 튜닝 표면 + runtime env — ⏳ PENDING
 
 **목적**: 모든 Solver\*의 생성자 kwargs 를 pack yaml로 pass-through. `/sim/set_gravity` 서비스 추가.
 
@@ -310,7 +319,7 @@ sim:
 
 ---
 
-### Phase 7 — Viewer 확장 (Rerun 기본) — ✅ COMPLETED
+### Phase 7 — Viewer 확장 (Rerun 기본) — ⏳ PENDING
 
 **목적**: 뷰어 선택을 환경변수 하나(`VIEWER`) 로 단순화. Rerun 웹뷰어 기본 활성화.
 
@@ -378,13 +387,13 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 
 | Phase | 상태 | 커밋 | 비고 |
 |---|---|---|---|
-| 0 | ✅ completed | (this doc) | API dump 확보 |
-| 1 | ✅ completed | 38a9db3 | ArticulationView refactor — pattern in pack yaml |
-| 3 | ✅ completed | fdf2541 | 4-channel actuation + per-joint drive overrides |
-| 4 | ✅ completed | 4d7e69a | JointState vel+effort + /tf default ON |
-| 2 | ✅ completed | a75e6c4 | scene.yaml unification (robot.yaml auto-shim) |
-| 5 | ✅ completed | 0dce70b | Contact + IMU sensors (standard msgs) |
-| 7 | ✅ completed | 75cd2de | Viewer factory + Rerun default |
-| 6a | ✅ completed | 0c38f05 | solver_params + /sim/set_gravity |
+| 0 | ✅ completed | 8427788 | API dump 확보 |
+| 1 | ⏳ pending | — | ArticulationView refactor — pattern in pack yaml |
+| 3 | ⏳ pending | — | 4-channel actuation + per-joint drive overrides |
+| 4 | ⏳ pending | — | JointState vel+effort + /tf default ON |
+| 2 | ⏳ pending | — | scene.yaml unification (robot.yaml auto-shim) |
+| 5 | ⏳ pending | — | Contact + IMU sensors (standard msgs) |
+| 7 | ⏳ pending | — | Viewer factory + Rerun default |
+| 6a | ⏳ pending | — | solver_params + /sim/set_gravity |
 
 **완료 정의**: 해당 phase의 unit test + verify.sh 관련 섹션이 모두 통과.

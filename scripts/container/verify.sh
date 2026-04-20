@@ -83,10 +83,20 @@ from newton_bridge.robot_pack import load_pack
 from newton_bridge.world import NewtonWorld
 pack = load_pack(Path("${pack%/}"))
 world = NewtonWorld(pack)
+
+# ArticulationView integrity: pack's joint_names is a subset (possibly proper)
+# of the view's DOFs — extras exist for packs with unexposed fingers etc.
+exposed = list(pack["joint_names"])
+view_set = set(world.joint_dof_names)
+missing = [n for n in exposed if n not in view_set]
+assert not missing, f"pack joints missing from view: {missing}"
+assert world.exposed_joint_names == exposed
+assert world.total_dof >= len(exposed)
+
 for _ in range(5):
     world.step()
 
-first_joint = next(iter(world.joint_layout))
+first_joint = world.joint_dof_names[0]
 q0 = world.read_joint_positions()[first_joint]
 world.set_joint_targets([first_joint], [q0 + 0.3])
 for _ in range(200):  # ~0.5s sim time at 400Hz
@@ -94,7 +104,15 @@ for _ in range(200):  # ~0.5s sim time at 400Hz
 q1 = world.read_joint_positions()[first_joint]
 dq = abs(q1 - q0)
 assert dq > 0.05, f"{first_joint} did not respond: Δq={dq:.4f} rad (target offset 0.3)"
-print(f"ok: dof={world.total_dof}, joints={len(world.joint_layout)}, "
+
+# reset() must restore home_pose q and zero velocity.
+world.reset()
+q_after_reset = world.read_joint_positions()
+for name, expected in (pack.get("home_pose") or {}).items():
+    got = q_after_reset[name]
+    assert abs(got - expected) < 1e-4, f"reset: {name} q={got:.4f} expected {expected:.4f}"
+
+print(f"ok: dof={world.total_dof}, joints={len(world.joint_dof_names)}, "
       f"Δq({first_joint})={dq:.4f} rad, t={world.sim_time:.4f}")
 PY
 done

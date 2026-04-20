@@ -12,6 +12,7 @@ from typing import Iterable
 import numpy as np
 import warp as wp
 import newton
+from newton.selection import ArticulationView
 
 
 class NewtonWorld:
@@ -25,7 +26,7 @@ class NewtonWorld:
 
         self._build_model()
         self._build_solver()
-        self._resolve_joint_layout()
+        self._build_view()
         self._control_target_host = np.zeros(self.total_dof, dtype=np.float32)
         self.sim_time: float = 0.0
 
@@ -79,9 +80,9 @@ class NewtonWorld:
             builder.joint_target_kd[i] = kd
             builder.joint_target_mode[i] = pos_mode
 
-        # Synthetic layout: yaml joint_names[i] -> DOF index i. Same mapping
-        # _resolve_joint_layout uses when model.joint_name is unavailable
-        # (true for URDF + MJCF in 1.1.0 — parser does not populate it).
+        # Synthetic layout for home pose: pack's joint_names[i] -> DOF index i.
+        # This matches the order ArticulationView.joint_dof_names will expose
+        # after finalize, so resetting is consistent.
         home = self.pack.get("home_pose", {}) or {}
         if not home:
             return
@@ -106,57 +107,61 @@ class NewtonWorld:
             raise ValueError(f"unknown solver: {solver_name!r}")
 
     # -- NEWTON API SURFACE -------------------------------------------------
-    def _resolve_joint_layout(self) -> None:
-        """Map each configured joint name -> (q_start, q_count) into joint_q.
+    def _build_view(self) -> None:
+        """Create an ArticulationView for name-based DOF/link access.
 
-        Uses model.joint_name + model.joint_q_start if present, otherwise
-        falls back to a revolute-only assumption (1 DOF per joint in order).
+        The pattern is an fnmatch glob (not regex) that matches against
+        `model.articulation_label[*]`. Default `*` picks up every
+        articulation in the model (fine for single-robot packs). A pack can
+        override via `articulation_pattern:` to select a specific
+        articulation when multiple are loaded.
         """
+        pattern = str(self.pack.get("articulation_pattern", "*"))
+        self.view = ArticulationView(self.model, pattern=pattern)
+
+        dof_names: list[str] = list(self.view.joint_dof_names)
         configured: list[str] = list(self.pack["joint_names"])
-        joint_names: list[str] = list(getattr(self.model, "joint_name", []))
 
-        layout: dict[str, tuple[int, int]] = {}
-
-        if joint_names:
-            q_start = np.asarray(
-                getattr(self.model, "joint_q_start", np.arange(len(joint_names)))
-            )
-            for i, name in enumerate(joint_names):
-                start = int(q_start[i])
-                end = int(q_start[i + 1]) if i + 1 < len(q_start) else int(
-                    self.state_0.joint_q.shape[0]
-                )
-                layout[name] = (start, end - start)
-        else:
-            for i, name in enumerate(configured):
-                layout[name] = (i, 1)
-
-        missing = [n for n in configured if n not in layout]
+        # Pack's joint_names is the ROS contract — a subset of what the model
+        # actually simulates. Extras (e.g. unexposed gripper fingers) are fine
+        # and remain at home_pose / 0. Missing names are fatal.
+        view_set = set(dof_names)
+        missing = [n for n in configured if n not in view_set]
         if missing:
             raise RuntimeError(
-                f"joints in robot.yaml not found in Newton model: {missing}\n"
-                f"available joints: {list(layout.keys())}"
+                "pack['joint_names'] references joints not in ArticulationView DOFs.\n"
+                f"  missing:    {missing}\n"
+                f"  configured: {configured}\n"
+                f"  actual:     {dof_names}\n"
+                f"  pattern:    {pattern!r}"
             )
 
-        self.joint_layout = {n: layout[n] for n in configured}
-        self.total_dof = int(self.state_0.joint_q.shape[0])
+        self.joint_dof_names: list[str] = dof_names  # full view order
+        self.exposed_joint_names: list[str] = configured  # ROS contract subset
+        self.total_dof: int = int(self.view.joint_dof_count)
+        # dof-name -> flat index over the full view (covers both exposed and
+        # unexposed joints, so set_joint_targets can address any of them).
+        self._dof_index: dict[str, int] = {n: i for i, n in enumerate(dof_names)}
 
     def _apply_home_pose(self) -> None:
         home = self.pack.get("home_pose", {}) or {}
         if not home:
             return
-        q = self.state_0.joint_q.numpy().copy()
-        for name, val in home.items():
-            if name not in self.joint_layout:
-                continue
-            start, count = self.joint_layout[name]
-            q[start] = float(val)
-        self.state_0.joint_q.assign(q)
 
-        # mirror into state_1 so a double-buffer swap doesn't undo the reset
-        q1 = self.state_1.joint_q.numpy().copy()
-        q1[:] = q
-        self.state_1.joint_q.assign(q1)
+        # Build full-dof array in the view's order; unspecified joints stay 0.
+        q = np.zeros(self.total_dof, dtype=np.float32)
+        for name, val in home.items():
+            i = self._dof_index.get(name)
+            if i is None:
+                continue
+            q[i] = float(val)
+
+        # ArticulationView.set_dof_positions expects shape
+        # (n_worlds, n_arts_per_world, dof_count). For our single-art case
+        # that's (1, 1, total_dof).
+        shaped = q.reshape(1, 1, self.total_dof)
+        self.view.set_dof_positions(self.state_0, shaped)
+        self.view.set_dof_positions(self.state_1, shaped)
         self.state_0.joint_qd.zero_()
         self.state_1.joint_qd.zero_()
 
@@ -167,17 +172,19 @@ class NewtonWorld:
 
     # ----------------------------------------------------------------------
     def read_joint_positions(self) -> dict[str, float]:
-        q = self.state_0.joint_q.numpy()
-        return {n: float(q[s]) for n, (s, _) in self.joint_layout.items()}
+        """Return {pack-exposed joint name: position}. Extras are hidden."""
+        # ArticulationView returns wp.array of shape
+        # (n_worlds, n_arts_per_world, dof_count). Single-art pack: flatten.
+        q = self.view.get_dof_positions(self.state_0).numpy().reshape(-1)
+        return {n: float(q[self._dof_index[n]]) for n in self.exposed_joint_names}
 
     def set_joint_targets(self, names: Iterable[str], positions: Iterable[float]) -> None:
         """Write position targets into control. Unknown names are silently ignored."""
         for name, pos in zip(names, positions):
-            slot = self.joint_layout.get(name)
-            if slot is None:
+            i = self._dof_index.get(name)
+            if i is None:
                 continue
-            start, _ = slot
-            self._control_target_host[start] = float(pos)
+            self._control_target_host[i] = float(pos)
         # -- NEWTON API SURFACE ---------------------------------------------
         # Newton 1.1.0: position setpoints live on control.joint_target_pos.
         # joint_act is feedforward (additive), not a PD setpoint.
