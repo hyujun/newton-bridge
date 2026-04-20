@@ -112,8 +112,19 @@ for name, expected in (pack.get("home_pose") or {}).items():
     got = q_after_reset[name]
     assert abs(got - expected) < 1e-4, f"reset: {name} q={got:.4f} expected {expected:.4f}"
 
+# Phase 4: rich readback APIs must match the pack's exposed joints / bodies.
+qd_map = world.read_joint_velocities()
+eff_map = world.read_joint_efforts()
+assert set(qd_map) == set(pack["joint_names"]), qd_map
+assert set(eff_map) == set(pack["joint_names"]), eff_map
+tf_map = world.read_body_transforms()
+assert len(tf_map) == len(world.view.body_names), (len(tf_map), len(world.view.body_names))
+for name, (pos, quat) in tf_map.items():
+    assert len(pos) == 3 and len(quat) == 4, (name, pos, quat)
+    assert all(v == v for v in pos + quat), f"NaN in tf[{name}]"  # NaN check
+
 print(f"ok: dof={world.total_dof}, joints={len(world.joint_dof_names)}, "
-      f"Δq({first_joint})={dq:.4f} rad, t={world.sim_time:.4f}")
+      f"bodies={len(tf_map)}, Δq({first_joint})={dq:.4f} rad, t={world.sim_time:.4f}")
 PY
 done
 

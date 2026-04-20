@@ -7,8 +7,9 @@
 | Direction | Topic | Type | Rate | QoS | Note |
 |---|---|---|---|---|---|
 | pub | `/clock` | `rosgraph_msgs/Clock` | physics_hz 또는 publish 시점 | Reliable, depth=10 | 외부 노드는 `use_sim_time: true` 로 구독 |
-| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (handshake) | Reliable, depth=10 | `name` 순서는 `robot.yaml: joint_names` |
-| sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position targets (rad); 부분 name 매칭 OK |
+| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (handshake) | Reliable, depth=10 | `name` 순서는 `robot.yaml: joint_names`. position/velocity/effort 3필드 모두 채움 |
+| pub | `/tf` | `tf2_msgs/TFMessage` | `/joint_states` 와 동일 시점 | Reliable, depth=10 | `ros.publish_tf` (default `true`) 로 on/off. 각 body 를 `tf_root_frame` 의 child 로 퍼블리시 |
+| sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position/velocity/effort 필드 각각 드라이브 채널로 매핑 (아래 §) |
 
 ### Joint conventions
 
@@ -49,6 +50,21 @@ name: ['shoulder_pan_joint']
 effort: [5.0]
 "
 ```
+
+## `/tf` (Phase 4)
+
+각 body 의 world-frame pose 를 `tf_root_frame` (default `world`) → `<body_label>` transform 으로 퍼블리시합니다. publish rate 은 `/joint_states` 와 동일 시점 (같은 `header.stamp`).
+
+pack yaml `ros:` 필드:
+
+```yaml
+ros:
+  publish_tf: true           # default true (결정 D)
+  tf_root_frame: world       # TF 트리의 루트 프레임 이름
+  publish_frames: []         # [] = 전체 (root 제외), 또는 화이트리스트 ["tool0", "wrist_3_link"]
+```
+
+**주의**: Newton 이 world-frame pose 만 제공하므로, 현재 구현은 킨매틱 트리가 아닌 **평탄한 world → each-body** 구조를 퍼블리시합니다. `robot_state_publisher` 와 호환되는 parent→child 체인은 URDF 를 재파싱해야 하므로 별도 phase 대상.
 
 ## Services (handshake mode only)
 

@@ -254,9 +254,29 @@ class NewtonWorld:
         return {n: float(qd[self._dof_index[n]]) for n in self.exposed_joint_names}
 
     def read_joint_efforts(self) -> dict[str, float]:
-        # state.joint_f is the torque the solver applied. get_dof_forces reads it.
-        f = self.view.get_dof_forces(self.state_0).numpy().reshape(-1)
+        """Return **commanded** joint force per exposed joint.
+
+        Newton 1.1.0 `State` does not expose `joint_f` (the applied torque);
+        `get_dof_forces(control)` reads the commanded `control.joint_f` buffer.
+        That's what we feed /joint_states.effort — a readback of what the
+        controller sent us, not the solver's post-step force. For POSITION/
+        VELOCITY modes this stays at 0 since we never write to joint_f.
+        """
+        f = self.view.get_dof_forces(self.control).numpy().reshape(-1)
         return {n: float(f[self._dof_index[n]]) for n in self.exposed_joint_names}
+
+    def read_body_transforms(self) -> dict[str, tuple[tuple[float, float, float], tuple[float, float, float, float]]]:
+        """Return {body_label: ((px, py, pz), (qx, qy, qz, qw))} for every body.
+
+        Used by the /tf publisher. Coordinates are world frame (Newton native).
+        """
+        # shape (n_worlds, n_arts, n_bodies, 7). Single-art pack: flatten to (n_bodies, 7).
+        arr = self.view.get_link_transforms(self.state_0).numpy().reshape(-1, 7)
+        return {
+            name: ((float(row[0]), float(row[1]), float(row[2])),
+                   (float(row[3]), float(row[4]), float(row[5]), float(row[6])))
+            for name, row in zip(self.view.body_names, arr)
+        }
 
     def set_joint_targets(
         self,

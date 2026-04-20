@@ -22,6 +22,8 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
 from rosgraph_msgs.msg import Clock
 from std_srvs.srv import Trigger
+from geometry_msgs.msg import TransformStamped
+from tf2_msgs.msg import TFMessage
 
 from .world import NewtonWorld
 
@@ -38,6 +40,12 @@ class SimBridgeNode(Node):
         self._joint_names: list[str] = list(self.pack["joint_names"])
         self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
         self._pub_interval: float = 1.0 / self._publish_rate_hz
+
+        # /tf config (Phase 4). Default ON per product decision D.
+        self._publish_tf_enabled: bool = bool(ros_cfg.get("publish_tf", True))
+        self._tf_root_frame: str = str(ros_cfg.get("tf_root_frame", "world"))
+        # Empty list means "publish every body except the root frame itself".
+        self._publish_frames: list[str] = list(ros_cfg.get("publish_frames", []) or [])
 
         # latest command (mutable; callback writes, main loop reads).
         # Any of positions/velocities/efforts may be None (= field was empty
@@ -61,6 +69,11 @@ class SimBridgeNode(Node):
         )
         self.sub_cmd = self.create_subscription(
             JointState, ros_cfg["joint_command_topic"], self._on_cmd, qos
+        )
+        self.pub_tf = (
+            self.create_publisher(TFMessage, "/tf", qos)
+            if self._publish_tf_enabled
+            else None
         )
 
         if self.sync_mode == "handshake":
@@ -144,12 +157,50 @@ class SimBridgeNode(Node):
         self._last_pub_wall = now_wall
 
         q = self.world.read_joint_positions()
+        qd = self.world.read_joint_velocities()
+        eff = self.world.read_joint_efforts()
+        now_stamp = self.get_clock().now().to_msg()
         msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = now_stamp
         msg.name = self._joint_names
         msg.position = [float(q[n]) for n in self._joint_names]
+        msg.velocity = [float(qd[n]) for n in self._joint_names]
+        # effort is the commanded control.joint_f readback; solver-applied
+        # torque is not exposed on State in Newton 1.1.0.
+        msg.effort = [float(eff[n]) for n in self._joint_names]
         self.pub_state.publish(msg)
         self._publish_clock()
+        self._publish_tf(now_stamp)
+
+    def _publish_tf(self, stamp) -> None:
+        if self.pub_tf is None:
+            return
+        poses = self.world.read_body_transforms()
+        # Filter: default = every body except the root frame itself.
+        # If publish_frames is set, publish only those names (still minus root).
+        if self._publish_frames:
+            names = [n for n in self._publish_frames if n in poses]
+        else:
+            names = [n for n in poses.keys() if n != self._tf_root_frame]
+        if not names:
+            return
+
+        tfm = TFMessage()
+        for name in names:
+            (px, py, pz), (qx, qy, qz, qw) = poses[name]
+            tr = TransformStamped()
+            tr.header.stamp = stamp
+            tr.header.frame_id = self._tf_root_frame
+            tr.child_frame_id = name
+            tr.transform.translation.x = px
+            tr.transform.translation.y = py
+            tr.transform.translation.z = pz
+            tr.transform.rotation.x = qx
+            tr.transform.rotation.y = qy
+            tr.transform.rotation.z = qz
+            tr.transform.rotation.w = qw
+            tfm.transforms.append(tr)
+        self.pub_tf.publish(tfm)
 
     def _render_viewer(self) -> None:
         if self.viewer is None:

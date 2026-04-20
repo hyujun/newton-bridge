@@ -224,7 +224,18 @@ joints:
 
 ---
 
-### Phase 4 — Rich joint_states + /tf — ⏳ PENDING
+### Phase 4 — Rich joint_states + /tf — ✅ COMPLETED
+
+**구현 노트**:
+- `/joint_states` 의 `velocity`/`effort` 도 채움 (기존엔 position 만)
+- `effort` 는 `control.joint_f` readback (solver-applied 토크는 State에 노출 안 됨)
+  — EFFORT 모드에서만 의미 있는 값; POSITION/VELOCITY 모드는 0.
+- `/tf` 는 `ros.publish_tf: true` (default) 에서 활성. 모든 body 를
+  `tf_root_frame`(`world`)의 child 로 평탄 퍼블리시 — parent→child 체인 아님.
+- `ros.publish_frames: []` (default) = root 제외 전체. 화이트리스트 지원.
+- `view.get_link_transforms(state)` → `wp.array[transformf]` shape `(1,1,N,7)`
+  → numpy reshape `(-1, 7)` = (px,py,pz,qx,qy,qz,qw).
+
 
 **목적**: `/joint_states` 3필드(position+velocity+effort) 채우고, 링크 프레임을 `/tf` 로 publish.
 
@@ -402,7 +413,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 |---|---|---|---|
 | 0 | ✅ completed | 8427788 | API dump 확보 |
 | 1 | ✅ completed | 64858ed | ArticulationView refactor — pattern in pack yaml |
-| 3 | ⏳ pending | — | 4-channel actuation + per-joint drive overrides |
+| 3 | ✅ completed | bdb4205 | 4-channel actuation + per-joint drive overrides |
 | 4 | ⏳ pending | — | JointState vel+effort + /tf default ON |
 | 2 | ⏳ pending | — | scene.yaml unification (robot.yaml auto-shim) |
 | 5 | ⏳ pending | — | Contact + IMU sensors (standard msgs) |
