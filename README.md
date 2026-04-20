@@ -28,17 +28,22 @@ English summary: [docs/en/README.md](docs/en/README.md)
 ## Quick start
 
 ```bash
-./scripts/host/install.sh        # 호스트 prereq (docker, compose v2, nvidia-container-toolkit)
-./scripts/host/fetch_assets.sh   # mujoco_menagerie + ur5e URDF 다운로드
-./scripts/host/build.sh          # Docker 이미지 빌드 (5~15분)
-./scripts/host/run.sh verify     # 컨테이너 스모크 테스트
-./scripts/host/run.sh sim        # ROBOT=ur5e, freerun, 기본 (headless)
+./scripts/host/install.sh             # 호스트 prereq (base utils + docker + compose v2 + nvidia toolkit)
+./scripts/host/install.sh --with-ros  # + ROS 2 Jazzy Desktop + ur_description (verify_ros.sh 용)
+./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드
+./scripts/host/build.sh               # Docker 이미지 빌드 (5~15분)
+./scripts/host/run.sh verify          # 컨테이너 스모크 테스트
+./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, 기본 (headless)
 ENABLE_VIEWER=1 ./scripts/host/run.sh sim   # 같은데 Newton GL viewer 창을 띄움
 ```
 
-> `install.sh` 는 **호스트에 Docker 구동 패키지만** 설치합니다. 이미 docker +
-> nvidia toolkit 이 깔려 있으면 건너뛰어도 됩니다. `--only-check` 로 현재 상태만
-> 점검 가능.
+> 모든 `scripts/host/*.sh` 는 **재실행 안전 (idempotent)** — 이미 완료된 단계는 스킵합니다.
+
+> `install.sh` 는 **fresh Ubuntu 24.04** 에서 base utils (git, rsync, curl, jq, xhost) +
+> Docker Engine + compose v2 + (GPU 있으면) nvidia-container-toolkit 까지 설치합니다.
+> `--only-check` 로 현재 상태만 점검, `--with-ros` 로 호스트 ROS 2 Jazzy Desktop + `ur_description`
+> 까지 설치 (`verify_ros.sh` / `controller_demo.py` 용). **NVIDIA driver 는 감지만 하고 설치하지 않음**
+> — 없으면 `sudo ubuntu-drivers autoinstall && sudo reboot` 후 재실행.
 
 > Viewer 는 X11 passthrough(이미 `docker/compose.yml` 에 wired) + nvidia GL
 > 드라이버가 필요합니다. 창을 닫으면 sim 도 종료됩니다. `handshake` 모드에서는
@@ -129,7 +134,3 @@ newton-bridge/
 - [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가, URDF/xacro/MJCF 연동
 - [docs/en/README.md](docs/en/README.md) — 영문 요약
 - Newton 공식: <https://newton-physics.github.io/newton/latest/>
-
-## sibling: sim-bridge
-
-같은 `~/ros2_ws/` 안의 [sim-bridge](../sim-bridge/) 는 **Isaac Sim 컨테이너 내부**의 Newton 을 쓰는 경로입니다. newton-bridge 는 Isaac Sim 없이 standalone Newton 만 씀. Robot pack 계약은 두 repo 가 호환.

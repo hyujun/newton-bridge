@@ -15,15 +15,16 @@
 # 1) NVIDIA driver 확인 (install.sh 가 설치해주지 않음 — 호스트 담당)
 nvidia-smi           # CUDA Version: 12.4+
 
-# 2) Docker + compose v2 + NVIDIA Container Toolkit 자동 설치
-#    (sim-bridge 셋업 등으로 이미 깔려 있으면 스킵됨)
+# 2) base utils + Docker + compose v2 + NVIDIA Container Toolkit 자동 설치
+#    (이미 깔려 있으면 스킵됨 — 모든 단계 idempotent)
 ./scripts/host/install.sh
 #    옵션: ./scripts/host/install.sh --only-check   # 현재 상태만 점검
 #          ./scripts/host/install.sh --no-nvidia    # GPU 있어도 toolkit 건너뜀
+#          ./scripts/host/install.sh --with-ros     # 호스트 ROS 2 Jazzy Desktop + ur_description
 
 # 3) ROS 2 Jazzy (호스트용 — 컨테이너와 DDS 토픽 주고받을 용도)
+#    install.sh --with-ros 로 한 번에 설치하거나, 수동:
 #    https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html
-sudo apt install ros-jazzy-ros-base
 
 # 4) GPU 컨테이너 동작 검증
 docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.0-base-ubuntu24.04 nvidia-smi

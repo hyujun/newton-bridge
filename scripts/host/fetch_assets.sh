@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pull robot assets into robots/<name>/models/ from upstream sources.
-#   - UR5e URDF:        sibling sim-bridge repo, then fallback to ur_description apt pkg
+#   - UR5e URDF:        ur_description apt pkg (ros-jazzy-ur-description)
 #   - franka MJCF:      mujoco_menagerie (shallow clone, pinned main)
 #   - kuka_iiwa_14 MJCF: mujoco_menagerie (shared clone)
 #
@@ -14,6 +14,16 @@ cd "${REPO_ROOT}"
 log()  { printf '\033[1;34m[fetch]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[fetch]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[fetch]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# -- prereq check -------------------------------------------------------------
+missing=()
+for cmd in git rsync; do
+    command -v "${cmd}" >/dev/null 2>&1 || missing+=("${cmd}")
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+    die "missing host utilities: ${missing[*]}
+  run ./scripts/host/install.sh first (it installs git, rsync, etc.)"
+fi
 
 CACHE="${REPO_ROOT}/assets/_cache"
 mkdir -p "${CACHE}"
@@ -45,27 +55,22 @@ cp -r "${MENAGERIE}/kuka_iiwa_14/assets" robots/kuka_iiwa_14/models/ 2>/dev/null
 # -- 4) ur5e ------------------------------------------------------------------
 log "populating robots/ur5e/models"
 mkdir -p robots/ur5e/models
-SIMBRIDGE_UR5E="${REPO_ROOT}/../sim-bridge/robots/ur5e"
-if [[ -d "${SIMBRIDGE_UR5E}/urdf" ]]; then
-    log "  source: sibling sim-bridge repo"
-    rsync -a --delete "${SIMBRIDGE_UR5E}/urdf/" robots/ur5e/models/
-    if [[ -d "${SIMBRIDGE_UR5E}/meshes" ]]; then
-        rsync -a --delete "${SIMBRIDGE_UR5E}/meshes/" robots/ur5e/models/meshes/
-    fi
-else
-    warn "sim-bridge/robots/ur5e not found — trying ur_description from apt"
-    if dpkg -s ros-jazzy-ur-description >/dev/null 2>&1; then
-        UR_SHARE="$(ros2 pkg prefix ur_description 2>/dev/null || echo "")/share/ur_description"
-        if [[ -d "${UR_SHARE}" ]]; then
-            rsync -a "${UR_SHARE}/urdf/" robots/ur5e/models/
-            rsync -a "${UR_SHARE}/meshes/ur5e/" robots/ur5e/models/meshes/ur5e/ 2>/dev/null || true
-        else
-            die "ur_description not on share path — copy urdf/ + meshes/ manually"
-        fi
-    else
-        die "no UR5e source: neither ../sim-bridge nor apt ros-jazzy-ur-description"
-    fi
+if ! dpkg -s ros-jazzy-ur-description >/dev/null 2>&1; then
+    die "ros-jazzy-ur-description not installed.
+  install it with:
+    ./scripts/host/install.sh --with-ros"
 fi
+UR_SHARE="/opt/ros/jazzy/share/ur_description"
+if command -v ros2 >/dev/null 2>&1; then
+    UR_SHARE="$(ros2 pkg prefix ur_description 2>/dev/null || echo /opt/ros/jazzy)/share/ur_description"
+fi
+if [[ ! -d "${UR_SHARE}" ]]; then
+    die "ur_description installed but share path not found at ${UR_SHARE}
+  copy urdf/ + meshes/ manually into robots/ur5e/models/"
+fi
+log "  source: apt ros-jazzy-ur-description (${UR_SHARE})"
+rsync -a --delete "${UR_SHARE}/urdf/" robots/ur5e/models/
+rsync -a --delete "${UR_SHARE}/meshes/ur5e/" robots/ur5e/models/meshes/ur5e/ 2>/dev/null || true
 
 log "done. Verify tree:"
 log "  robots/ur5e/models/*.urdf"

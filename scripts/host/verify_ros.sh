@@ -11,11 +11,21 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 
 if [[ ! -f /opt/ros/jazzy/setup.bash ]]; then
-    echo "[verify-ros] /opt/ros/jazzy/setup.bash missing — install ROS 2 Jazzy on the host first" >&2
+    cat >&2 <<'EOF'
+[verify-ros] /opt/ros/jazzy/setup.bash missing — ROS 2 Jazzy is not installed on the host.
+  install it with:
+    ./scripts/host/install.sh --with-ros
+  (installs ros-jazzy-desktop + ros-jazzy-ur-description, idempotent)
+EOF
     exit 1
 fi
 # shellcheck disable=SC1091
 source /opt/ros/jazzy/setup.bash
+
+if ! command -v ros2 >/dev/null 2>&1; then
+    echo "[verify-ros] 'ros2' CLI not on PATH after sourcing setup.bash — ROS install looks broken" >&2
+    exit 1
+fi
 
 log "ros2 topic list (expect /clock, /joint_states, /joint_command)"
 ros2 topic list

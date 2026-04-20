@@ -8,7 +8,7 @@
 | rclpy bridge | 동일 프로세스 (`newton_bridge` 패키지) | DDS 토픽/서비스 ↔ Newton state |
 | ROS 2 Jazzy | 호스트 (또는 다른 컨테이너) | 외부 custom controller |
 
-단일 프로세스가 `newton.Model` 과 `rclpy.Node` 를 동시에 보유해서, sim-bridge 의 "Isaac Sim extension + OmniGraph + rclpy sidechannel" 3중 레이어보다 훨씬 단순합니다.
+단일 프로세스가 `newton.Model` 과 `rclpy.Node` 를 동시에 보유해서, 같은 GIL 아래에서 shared-memory 로 state 에 접근합니다. 별도 extension / sidechannel 레이어 없음.
 
 ## 통신 경로
 
@@ -114,9 +114,9 @@ ros:
 
 ## 왜 이 설계인가
 
-- **단일 프로세스**: Newton Warp kernel 과 rclpy callback 이 같은 GIL 아래 있으므로 shared-memory 로 state 접근. sim-bridge 가 고민했던 OmniGraph write-back 타이밍 이슈 없음.
+- **단일 프로세스**: Newton Warp kernel 과 rclpy callback 이 같은 GIL 아래 있으므로 shared-memory 로 state 접근 — 별도 IPC 계층 없음.
 - **표준 메시지만 사용**: 초기 스캐폴드는 `sensor_msgs/JointState`, `rosgraph_msgs/Clock`, `std_srvs/Trigger` 만으로 구성. 커스텀 msg 패키지 없음 → colcon build 없음 → 이미지 빌드 속도 빠름.
-- **pack 계약 = sim-bridge 호환**: 향후 sim-bridge ↔ newton-bridge 로 로봇 swap 이 단순 env var 바꿈으로 가능.
+- **pack 계약**: `robots/<name>/robot.yaml` 만 바꾸면 로봇 swap 이 단순 env var 하나로 가능.
 
 ## 알려진 이슈
 
