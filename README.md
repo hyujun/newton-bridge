@@ -33,8 +33,9 @@ English summary: [docs/en/README.md](docs/en/README.md)
 ./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드
 ./scripts/host/build.sh               # Docker 이미지 빌드 (5~15분)
 ./scripts/host/run.sh verify          # 컨테이너 스모크 테스트
-./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, 기본 (headless)
-ENABLE_VIEWER=1 ./scripts/host/run.sh sim   # 같은데 Newton GL viewer 창을 띄움
+./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, VIEWER=rerun → http://localhost:9090
+VIEWER=gl ./scripts/host/run.sh sim   # Newton GL viewer 창 (X11 필요)
+VIEWER=none ./scripts/host/run.sh sim # headless
 ```
 
 > 모든 `scripts/host/*.sh` 는 **재실행 안전 (idempotent)** — 이미 완료된 단계는 스킵합니다.
@@ -45,9 +46,10 @@ ENABLE_VIEWER=1 ./scripts/host/run.sh sim   # 같은데 Newton GL viewer 창을 
 > 까지 설치 (`verify_ros.sh` / `controller_demo.py` 용). **NVIDIA driver 는 감지만 하고 설치하지 않음**
 > — 없으면 `sudo ubuntu-drivers autoinstall && sudo reboot` 후 재실행.
 
-> Viewer 는 X11 passthrough(이미 `docker/compose.yml` 에 wired) + nvidia GL
-> 드라이버가 필요합니다. 창을 닫으면 sim 도 종료됩니다. `handshake` 모드에서는
-> `/sim/step` / `/sim/reset` 호출 시점에만 프레임이 갱신됩니다.
+> **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
+> X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·
+> `usd` / `file` (`workspace/runs/<ts>.{usd,nvpr}` 로 녹화) · `null` (벤치마크) · `none`.
+> `handshake` 모드에서는 `/sim/step` / `/sim/reset` 호출 시점에만 프레임이 갱신됩니다.
 
 별도 터미널에서 (호스트):
 

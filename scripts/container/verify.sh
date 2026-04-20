@@ -242,6 +242,29 @@ assert np.isfinite(fx) and np.isfinite(fy) and np.isfinite(fz), (fx, fy, fz)
 print(f"ok: contact force=({fx:+.2f}, {fy:+.2f}, {fz:+.2f}) N")
 PY
 
+banner "10. VIEWER=null dispatches + end_frame runs"
+run "viewer factory null mode" bash -c "
+VIEWER=null python3 - <<'PY'
+import os
+os.environ['VIEWER'] = 'null'
+os.environ['ROBOT_PACK'] = '/workspace/robots/ur5e'
+import warp as wp; wp.init()
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+from newton_bridge.viewer import build_viewer, resolve_mode
+assert resolve_mode() == 'null'
+world = NewtonWorld(load_pack(Path(os.environ['ROBOT_PACK'])))
+v = build_viewer(world)
+assert v is not None
+v.begin_frame(0.0)
+v.log_state(world.state_0)
+v.end_frame()
+v.close()
+print('ok: null viewer end-to-end')
+PY
+"
+
 banner "Summary"
 printf 'passed: %d   failed: %d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"

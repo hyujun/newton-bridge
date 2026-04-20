@@ -367,7 +367,15 @@ sim:
 
 ---
 
-### Phase 7 — Viewer 확장 (Rerun 기본) — ⏳ PENDING
+### Phase 7 — Viewer 확장 (Rerun 기본) — ✅ COMPLETED
+
+**구현 노트**:
+- `VIEWER` env 로 통합: `rerun|gl|usd|file|null|none` (default `rerun`).
+- `ENABLE_VIEWER=1` 은 `SystemExit` 로 거부 + 마이그레이션 안내 (silent shim 없음).
+- `rerun` 은 `network_mode: host` 덕분에 추가 포트 매핑 없이 `localhost:9090` 에 접근.
+- `usd`/`file` 은 `workspace/runs/<ts>.{usd,nvpr}` 로 자동 저장 (`VIEWER_OUTPUT_PATH` 로 오버라이드).
+- `resolve_mode()` 는 Newton import 없이 호스트 pytest 에서도 호출 가능.
+
 
 **목적**: 뷰어 선택을 환경변수 하나(`VIEWER`) 로 단순화. Rerun 웹뷰어 기본 활성화.
 
@@ -440,7 +448,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | 3 | ✅ completed | bdb4205 | 4-channel actuation + per-joint drive overrides |
 | 4 | ✅ completed | 9c733ee | JointState vel+effort + /tf default ON |
 | 2 | ✅ completed | a7b0a80 | scene.yaml unification (robot.yaml auto-shim) |
-| 5 | ⏳ pending | — | Contact + IMU sensors (standard msgs) |
+| 5 | ✅ completed | 8c9e110 | Contact + IMU sensors (standard msgs) |
 | 7 | ⏳ pending | — | Viewer factory + Rerun default |
 | 6a | ⏳ pending | — | solver_params + /sim/set_gravity |
 

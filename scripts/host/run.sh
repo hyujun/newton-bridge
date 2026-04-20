@@ -31,8 +31,14 @@ fi
 : "${FREERUN_RATE:=realtime}"
 : "${ROS_DOMAIN_ID:=0}"
 : "${RMW_IMPLEMENTATION:=rmw_fastrtps_cpp}"
-: "${ENABLE_VIEWER:=0}"
-export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION ENABLE_VIEWER
+: "${VIEWER:=rerun}"
+export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION VIEWER
+
+# Deprecation shim: ENABLE_VIEWER=1 was replaced by VIEWER=gl in Phase 7.
+if [[ "${ENABLE_VIEWER:-0}" != "0" ]]; then
+    echo "[run.sh] ERROR: ENABLE_VIEWER is deprecated. Use VIEWER=gl (or rerun/usd/file/null/none)." >&2
+    exit 2
+fi
 # UID/GID are readonly in bash; use HOST_UID/HOST_GID for docker-compose.
 export HOST_UID="${HOST_UID:-$(id -u)}"
 export HOST_GID="${HOST_GID:-$(id -g)}"
@@ -88,7 +94,7 @@ env overrides:
   SYNC_MODE=freerun|handshake
   FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
-  ENABLE_VIEWER=0|1     open Newton GL viewer window (default: 0)
+  VIEWER=rerun|gl|usd|file|null|none  (default: rerun — web viewer at http://localhost:9090)
 EOF
         exit 1
         ;;

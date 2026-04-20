@@ -35,13 +35,16 @@ services:
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
       - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | handshake
       - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
-      # -- Optional Newton GL viewer ---------------------------------------
-      # ENABLE_VIEWER=1 opens a window via newton.viewer.ViewerGL. Requires
-      # X11 passthrough (already wired above) + nvidia GL (driver caps include
-      # graphics,display). Window close -> sim exits.
-      - ENABLE_VIEWER=${ENABLE_VIEWER:-0}
+      # -- Viewer selection (Phase 7) --------------------------------------
+      # VIEWER picks which Newton viewer attaches. Default: rerun (web UI on
+      # host:9090 via network_mode:host — no X11 needed). `gl` opens a native
+      # window (X11 passthrough + nvidia GL). `usd`/`file` record to
+      # workspace/runs/. `null` is for benchmarking. `none` disables.
+      - VIEWER=${VIEWER:-rerun}
       - VIEWER_WIDTH=${VIEWER_WIDTH:-1280}
       - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
+      - RERUN_WEB_PORT=${RERUN_WEB_PORT:-9090}
+      - RERUN_GRPC_PORT=${RERUN_GRPC_PORT:-9876}
       # -- Jupyter ----------------------------------------------------------
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-newton}
     deploy:

@@ -4,7 +4,7 @@ Reads env:
     ROBOT_PACK      container path to robots/<name>/ (default /workspace/robots/ur5e)
     SYNC_MODE       freerun | handshake (default freerun)
     FREERUN_RATE    realtime | max (freerun only, default realtime)
-    ENABLE_VIEWER   0 | 1 (optional GL viewer window)
+    VIEWER          rerun | gl | usd | file | null | none (default rerun)
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import rclpy
 from .robot_pack import load_pack
 from .world import NewtonWorld
 from .node import SimBridgeNode
-from .viewer import build_viewer
+from .viewer import build_viewer, resolve_mode
 
 
 def _resolve_pack_dir() -> Path:
@@ -31,10 +31,6 @@ def _resolve_pack_dir() -> Path:
     return p
 
 
-def _env_truthy(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def main() -> int:
     pack_dir = _resolve_pack_dir()
     sync_mode = os.environ.get("SYNC_MODE", "freerun").lower()
@@ -42,6 +38,8 @@ def main() -> int:
     if sync_mode not in {"freerun", "handshake"}:
         print(f"[newton_bridge] invalid SYNC_MODE={sync_mode!r}", file=sys.stderr)
         return 2
+
+    viewer_mode = resolve_mode()  # may SystemExit on bad VIEWER / legacy ENABLE_VIEWER
 
     print(f"[newton_bridge] loading pack: {pack_dir}", flush=True)
     pack = load_pack(pack_dir)
@@ -58,14 +56,14 @@ def main() -> int:
     )
 
     viewer = None
-    if _env_truthy("ENABLE_VIEWER"):
+    if viewer_mode != "none":
         try:
-            viewer = build_viewer(world)
-            print("[newton_bridge] GL viewer enabled (close window to stop sim)", flush=True)
+            viewer = build_viewer(world, mode=viewer_mode)
+            print(f"[newton_bridge] viewer: {viewer_mode}", flush=True)
         except Exception as exc:  # noqa: BLE001 — surface viewer init failures clearly
             print(
-                f"[newton_bridge] ENABLE_VIEWER=1 but viewer init failed: {exc!r}\n"
-                f"[newton_bridge] continuing headless. Check DISPLAY + xhost + nvidia GL.",
+                f"[newton_bridge] VIEWER={viewer_mode} init failed: {exc!r}\n"
+                f"[newton_bridge] continuing headless. Set VIEWER=none to silence.",
                 file=sys.stderr,
                 flush=True,
             )
@@ -73,7 +71,7 @@ def main() -> int:
         if viewer is not None and sync_mode == "handshake":
             print(
                 "[newton_bridge] note: handshake mode renders only on /sim/step or /sim/reset; "
-                "the window will appear frozen until a controller calls those services.",
+                "the viewer will appear frozen until a controller calls those services.",
                 flush=True,
             )
 
