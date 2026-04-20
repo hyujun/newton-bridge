@@ -8,7 +8,8 @@
 
 ```
 robots/<name>/
-├── robot.yaml         ← 유일한 tracked 파일 (Git 에 커밋됨)
+├── robot.yaml         ← 레거시 단일 로봇 (여전히 지원; 자동 shim)
+├── scene.yaml         ← 또는 (우선) canonical 멀티-articulation 스키마
 └── models/            ← URDF 또는 MJCF + meshes/assets (gitignored)
     ├── <name>.urdf    #   URDF 경로의 경우
     │   └── meshes/    #   URDF 가 상대경로로 참조
@@ -16,9 +17,50 @@ robots/<name>/
     └── assets/        #   MJCF 가 상대경로로 참조
 ```
 
-- **tracked vs fetched**: 에셋(URDF/MJCF/STL)은 [.gitignore](../.gitignore) 에 따라 저장소에 안 올라갑니다. 라이선스/크기 이유. `robot.yaml` 만 커밋.
-- **경로 규약**: `robot.yaml: robot.source_rel` 는 pack 디렉토리 기준 상대경로 (`models/<name>.urdf` 또는 `models/<name>.xml`). 컨테이너 안에서는 `/workspace/robots/<name>/` 으로 bind-mount 되므로 그대로 동작.
+- **tracked vs fetched**: 에셋(URDF/MJCF/STL)은 [.gitignore](../.gitignore) 에 따라 저장소에 안 올라갑니다. 라이선스/크기 이유. `robot.yaml` / `scene.yaml` 만 커밋.
+- **경로 규약**: `source_rel` 는 pack 디렉토리 기준 상대경로 (`models/<name>.urdf` 또는 `models/<name>.xml`). 컨테이너 안에서는 `/workspace/robots/<name>/` 으로 bind-mount 됩니다.
+- **로더 우선순위**: `scene.yaml` 이 있으면 그걸 우선 사용, 없으면 `robot.yaml` 을 자동으로 scene 형태로 승격 (shim). 둘 다 없으면 에러.
 - **URDF/MJCF 통일**: 이전에는 `urdf/` 와 `mjcf/` 로 갈려 있었으나 현재는 둘 다 `models/` 하나로 통일. 로봇을 다른 format 으로 마이그레이션할 때 상위 경로가 그대로라 편함.
+
+## 최소 `scene.yaml` 스켈레톤 (canonical Phase 2+)
+
+```yaml
+# robots/<name>/scene.yaml — 멀티-articulation 지원의 canonical 스키마.
+sim:
+  physics_hz: 400
+  substeps: 1
+  solver: mujoco          # xpbd | mujoco | featherstone
+  ground_plane: true
+  gravity: [0, 0, -9.81]
+
+worlds:
+  - label: env0
+    gravity: [0, 0, -9.81]    # optional; sim.gravity override
+    articulations:
+      - label: arm           # 고유 이름 (ROS primary_articulation 참조용)
+        source: urdf         # urdf | mjcf
+        source_rel: models/<name>.urdf
+        xform:
+          pos: [0, 0, 0]
+          rot: [0, 0, 0, 1]  # quaternion xyzw
+        articulation_pattern: "*"   # fnmatch glob (ArticulationView 매칭)
+        joint_names: [j1, j2, ...]  # ROS 노출 서브셋
+        home_pose: {j1: 0.0, ...}
+        drive: {mode: position, stiffness: 10000, damping: 100}
+        joints:                    # per-joint 오버라이드 (Phase 3)
+          j1: {effort_limit: 150, friction: 0.1}
+
+ros:
+  primary_articulation: arm  # 어떤 articulation 이 /joint_states 에 퍼블리시될지
+  joint_states_topic:  /joint_states
+  joint_command_topic: /joint_command
+  publish_rate_hz:     100
+  publish_tf:          true      # Phase 4
+  tf_root_frame:       world
+  publish_frames:      []        # [] = 전체, 또는 whitelist
+```
+
+**현재 제한 (Phase 2 스코프)**: 하나의 world + 하나의 articulation 만 실행. 멀티-articulation 또는 멀티-world 정의는 로더가 `NotImplementedError` 로 명확히 거부.
 
 ## 최소 `robot.yaml` 스켈레톤
 

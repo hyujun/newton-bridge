@@ -106,7 +106,18 @@
 
 ---
 
-### Phase 2 — Scene.yaml multi-world / multi-articulation — ⏳ PENDING
+### Phase 2 — Scene.yaml multi-world / multi-articulation — ✅ COMPLETED
+
+**구현 노트**:
+- `scene.yaml` 이 canonical, `robot.yaml` 은 자동 shim (loader가 `_promote_robot_yaml`
+  로 scene 형태로 승격).
+- 내부 표현은 scene dict + primary-articulation 탑레벨 alias (`robot`, `joint_names`,
+  `home_pose`, `drive`, `joints`, `articulation_pattern`). 기존 NewtonWorld/
+  SimBridgeNode 코드는 변경 없음.
+- **현 phase 스코프**: 1 world × 1 articulation. 다중 world / 다중 articulation
+  은 `NotImplementedError` 로 거부 (별도 phase 대상).
+- `ros.primary_articulation` 필드 추가 (미지정 시 첫 articulation).
+
 
 **목적**: 단일 로봇 `robot.yaml`을 `scene.yaml`로 자연스럽게 확장. Newton의 `begin_world/end_world` + `add_world` primitive에 1:1 매핑.
 
@@ -414,7 +425,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | 0 | ✅ completed | 8427788 | API dump 확보 |
 | 1 | ✅ completed | 64858ed | ArticulationView refactor — pattern in pack yaml |
 | 3 | ✅ completed | bdb4205 | 4-channel actuation + per-joint drive overrides |
-| 4 | ⏳ pending | — | JointState vel+effort + /tf default ON |
+| 4 | ✅ completed | 9c733ee | JointState vel+effort + /tf default ON |
 | 2 | ⏳ pending | — | scene.yaml unification (robot.yaml auto-shim) |
 | 5 | ⏳ pending | — | Contact + IMU sensors (standard msgs) |
 | 7 | ⏳ pending | — | Viewer factory + Rerun default |
