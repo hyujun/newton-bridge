@@ -2,7 +2,8 @@
 
 Reads env:
     ROBOT_PACK      container path to robots/<name>/ (default /workspace/robots/ur5e)
-    SYNC_MODE       freerun | handshake (default freerun)
+    SYNC_MODE       freerun | sync (default freerun). Legacy "handshake" is
+                    accepted with a deprecation warning and treated as "sync".
     FREERUN_RATE    realtime | max (freerun only, default realtime)
     VIEWER          rerun | gl | usd | file | null | none (default rerun)
 """
@@ -35,7 +36,14 @@ def main() -> int:
     pack_dir = _resolve_pack_dir()
     sync_mode = os.environ.get("SYNC_MODE", "freerun").lower()
     rate_mode = os.environ.get("FREERUN_RATE", "realtime").lower()
-    if sync_mode not in {"freerun", "handshake"}:
+    if sync_mode == "handshake":
+        print(
+            "[newton_bridge] SYNC_MODE=handshake is deprecated; use SYNC_MODE=sync",
+            file=sys.stderr,
+            flush=True,
+        )
+        sync_mode = "sync"
+    if sync_mode not in {"freerun", "sync"}:
         print(f"[newton_bridge] invalid SYNC_MODE={sync_mode!r}", file=sys.stderr)
         return 2
 
@@ -68,10 +76,10 @@ def main() -> int:
                 flush=True,
             )
             viewer = None
-        if viewer is not None and sync_mode == "handshake":
+        if viewer is not None and sync_mode == "sync":
             print(
-                "[newton_bridge] note: handshake mode renders only on /sim/step or /sim/reset; "
-                "the viewer will appear frozen until a controller calls those services.",
+                "[newton_bridge] note: sync mode advances only on /joint_command or /sim/reset; "
+                "the viewer will appear frozen until a controller publishes commands.",
                 flush=True,
             )
 
@@ -91,9 +99,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _sigint)
 
     try:
-        if sync_mode == "handshake":
-            while rclpy.ok() and not node.shutdown_requested:
-                rclpy.spin_once(node, timeout_sec=0.1)
+        if sync_mode == "sync":
+            node.run_sync()
         else:
             node.run_freerun(rate_mode)
     finally:

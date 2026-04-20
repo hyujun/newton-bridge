@@ -156,6 +156,12 @@ def load_pack(pack_dir: Path) -> dict:
     scene = copy.deepcopy(scene)
     scene.setdefault("sim", {})
     scene.setdefault("ros", {})
+    # Defaults injected here so downstream readers don't re-encode them.
+    # viewer_hz: 0/None means "render every physics step" (no throttle).
+    # sync_timeout_ms: in sync mode, republish last state if no /joint_command
+    # arrives within this window.
+    scene["sim"].setdefault("viewer_hz", 60)
+    scene["ros"].setdefault("sync_timeout_ms", 100)
     _validate_scene(scene, pack_dir)
     _flatten_primary_aliases(scene)
     scene["_pack_dir"] = pack_dir

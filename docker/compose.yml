@@ -33,7 +33,7 @@ services:
       - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
       # -- newton_bridge config --------------------------------------------
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
-      - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | handshake
+      - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | sync
       - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
       # -- Viewer selection (Phase 7) --------------------------------------
       # VIEWER picks which Newton viewer attaches. Default: rerun (web UI on

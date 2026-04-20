@@ -3,12 +3,15 @@
 Topics (standard types, stable contract):
     pub  /clock           rosgraph_msgs/Clock    (every physics step)
     pub  /joint_states    sensor_msgs/JointState (rate-limited in freerun,
-                                                  per-step in handshake)
+                                                  per-step in sync +
+                                                  watchdog republish when idle)
     sub  /joint_command   sensor_msgs/JointState (position targets, rad;
-                                                  partial name match OK)
+                                                  partial name match OK).
+                                                  In sync mode, arrival of a
+                                                  command triggers one physics
+                                                  step.
 
-Services (handshake mode only):
-    /sim/step   std_srvs/Trigger   advance one physics step
+Services:
     /sim/reset  std_srvs/Trigger   restore pack.home_pose, publish state
 """
 
@@ -26,6 +29,7 @@ from geometry_msgs.msg import TransformStamped, Vector3, WrenchStamped
 from tf2_msgs.msg import TFMessage
 
 from .world import NewtonWorld
+from .ticks import CommandWatchdog, RenderTicker
 from .sensors import (
     SensorBundle,
     build_sensors,
@@ -46,9 +50,19 @@ class SimBridgeNode(Node):
         self._ready_logged = False
 
         ros_cfg = self.pack["ros"]
+        sim_cfg = self.pack["sim"]
         self._joint_names: list[str] = list(self.pack["joint_names"])
         self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
         self._pub_interval: float = 1.0 / self._publish_rate_hz
+
+        # Render cadence decoupled from physics step rate. viewer_hz=0/None
+        # means "render every physics step".
+        viewer_hz = sim_cfg.get("viewer_hz", 60)
+        self._render_ticker = RenderTicker(viewer_hz, world.physics_dt)
+
+        # Watchdog used only in sync mode — armed lazily in run_sync().
+        self._sync_timeout_s: float = float(ros_cfg.get("sync_timeout_ms", 100)) / 1000.0
+        self._cmd_watchdog = CommandWatchdog(self._sync_timeout_s)
 
         # /tf config (Phase 4). Default ON per product decision D.
         self._publish_tf_enabled: bool = bool(ros_cfg.get("publish_tf", True))
@@ -105,16 +119,23 @@ class SimBridgeNode(Node):
                 f"{len(self.sensors.imu)} imu"
             )
 
-        if self.sync_mode == "handshake":
-            self.srv_step = self.create_service(Trigger, "/sim/step", self._on_step)
-            self.srv_reset = self.create_service(Trigger, "/sim/reset", self._on_reset)
+        # /sim/reset is always available — useful in both modes.
+        self.srv_reset = self.create_service(Trigger, "/sim/reset", self._on_reset)
+
+        render_note = (
+            f"render @ {viewer_hz:.0f}Hz" if viewer_hz else "render every step"
+        )
+        if self.sync_mode == "sync":
             self.get_logger().info(
-                "handshake mode: call /sim/step to advance, /sim/reset to home"
+                f"sync mode: /joint_command drives one step each; "
+                f"watchdog republishes after {self._sync_timeout_s*1000:.0f}ms idle; "
+                f"{render_note}"
             )
         else:
             self.get_logger().info(
                 f"freerun mode: stepping @ {1.0/world.physics_dt:.0f}Hz, "
-                f"publishing /joint_states @ {self._publish_rate_hz:.0f}Hz"
+                f"publishing /joint_states @ {self._publish_rate_hz:.0f}Hz, "
+                f"{render_note}"
             )
 
         self._last_pub_wall: float = 0.0
@@ -135,29 +156,37 @@ class SimBridgeNode(Node):
         self._latest_cmd["velocities"] = list(msg.velocity) if len(msg.velocity) == n else None
         self._latest_cmd["efforts"] = list(msg.effort) if len(msg.effort) == n else None
 
-    # -- service callbacks (handshake) --------------------------------------
-    def _on_step(self, request, response):
-        self._apply_latest_cmd()
-        self.world.step()
-        if not self._ready_logged:
-            if self.ready_log_info is not None:
-                self.get_logger().info(self.ready_log_info)
-            self._ready_logged = True
-        self._publish_state(force=True)
-        self._render_viewer()
-        response.success = True
-        response.message = f"sim_time={self.world.sim_time:.6f}"
-        return response
+        if self.sync_mode == "sync":
+            self._cmd_watchdog.note_command(time.monotonic())
+            self._apply_latest_cmd()
+            self.world.step()
+            self._log_ready_once()
+            self._publish_state(force=True)
+            self._render_if_due()
 
+    # -- service callbacks --------------------------------------------------
     def _on_reset(self, request, response):
         self.world.reset()
         self._latest_cmd["names"] = None
         self._latest_cmd["positions"] = None
         self._publish_state(force=True)
-        self._render_viewer()
+        self._render_if_due()
         response.success = True
         response.message = "reset to home_pose"
         return response
+
+    def _log_ready_once(self) -> None:
+        if self._ready_logged:
+            return
+        if self.ready_log_info is not None:
+            self.get_logger().info(self.ready_log_info)
+        self._ready_logged = True
+
+    def _render_if_due(self) -> None:
+        if self.viewer is None:
+            return
+        if self._render_ticker.tick():
+            self._render_viewer()
 
     # -- helpers ------------------------------------------------------------
     def _apply_latest_cmd(self) -> None:
@@ -304,12 +333,9 @@ class SimBridgeNode(Node):
             if not paused:
                 self._apply_latest_cmd()
                 self.world.step()
-                if not self._ready_logged:
-                    if self.ready_log_info is not None:
-                        self.get_logger().info(self.ready_log_info)
-                    self._ready_logged = True
+                self._log_ready_once()
                 self._publish_state(force=False)
-            self._render_viewer()
+            self._render_if_due()
             if realtime and not paused:
                 next_wall += self.world.physics_dt
                 sleep_for = next_wall - time.monotonic()
@@ -320,3 +346,33 @@ class SimBridgeNode(Node):
             elif paused:
                 time.sleep(1.0 / 60.0)
                 next_wall = time.monotonic()
+
+    # -- sync main loop -----------------------------------------------------
+    def run_sync(self) -> None:
+        """Externally driven loop: /joint_command triggers step via _on_cmd.
+
+        The main loop only spins ROS callbacks and runs the idle watchdog,
+        which republishes /joint_states (without stepping) when no command
+        has arrived for sync_timeout_ms. Viewer window close / pause is
+        honored here too so the process exits cleanly when the user closes
+        the viewer.
+        """
+        # Publish initial state so late subscribers get at least one sample.
+        self._publish_state(force=True)
+        self._render_if_due()
+        # Spin timeout chosen to divide the watchdog window ~5 ways so the
+        # republish jitter stays below ~20% of sync_timeout_ms.
+        spin_timeout = min(0.02, self._sync_timeout_s / 5.0)
+        while rclpy.ok() and not self.shutdown_requested:
+            if self.viewer is not None and not self.viewer.is_running():
+                self.get_logger().info("viewer window closed; shutting down")
+                break
+            rclpy.spin_once(self, timeout_sec=spin_timeout)
+            if self.shutdown_requested:
+                break
+            if self._cmd_watchdog.is_stale(time.monotonic()):
+                # Stale: republish current state (no step, no render) so
+                # downstream tools that polled for /joint_states keep seeing
+                # fresh timestamps. Render stays tied to actual simulation
+                # progress.
+                self._publish_state(force=True)

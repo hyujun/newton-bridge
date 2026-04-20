@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Host-side ROS 2 verification. Run this in a separate terminal after
-# `./run.sh sim` (freerun) or `./run.sh sim` with SYNC_MODE=handshake.
+# `./run.sh sim` (freerun) or `./run.sh sim` with SYNC_MODE=sync.
 set -eu
 
 log() { printf '\033[1;34m[verify-ros]\033[0m %s\n' "$*"; }
@@ -40,13 +40,17 @@ log "ros2 topic echo /joint_states -n 1"
 timeout 3 ros2 topic echo --once /joint_states || true
 
 MODE="${SYNC_MODE:-freerun}"
-if [[ "${MODE}" == "handshake" ]]; then
-    log "handshake: call /sim/step 5x"
-    for i in 1 2 3 4 5; do
-        ros2 service call /sim/step std_srvs/srv/Trigger "{}" | grep -E "success|message"
-    done
-    log "handshake: /sim/reset"
+if [[ "${MODE}" == "sync" || "${MODE}" == "handshake" ]]; then
+    log "sync: publish /joint_command 5x (each publish drives one step)"
+    # Reset first so the robot is at home_pose; then publish zero-delta cmds.
     ros2 service call /sim/reset std_srvs/srv/Trigger "{}" | grep -E "success|message"
+    for i in 1 2 3 4 5; do
+        ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+            "{name: [], position: [], velocity: [], effort: []}" >/dev/null
+        sleep 0.05
+    done
+    log "sync: echo /joint_states after 5 publishes"
+    timeout 2 ros2 topic echo --once /joint_states || true
 fi
 
 log "done."

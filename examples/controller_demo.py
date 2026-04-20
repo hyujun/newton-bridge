@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Minimal external controller for end-to-end verification.
 
-Freerun mode:    pub /joint_command = home + sine(t); observe /joint_states.
-Handshake mode:  call /sim/step N times, each preceded by a target update.
+Freerun mode:   pub /joint_command = home + sine(t); observe /joint_states.
+Sync mode:      pub /joint_command N times, each publish advances one step on
+                the sim side and the reply arrives on /joint_states.
 
 Run on the HOST (not inside the container).
 Example:
     source /opt/ros/jazzy/setup.bash
     python3 examples/controller_demo.py --mode freerun --robot ur5e
-    python3 examples/controller_demo.py --mode handshake --robot franka --steps 200
+    python3 examples/controller_demo.py --mode sync --robot franka --steps 200
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_srvs.srv import Trigger
 
 
 def load_home(repo_root: Path, robot: str) -> tuple[list[str], list[float]]:
@@ -76,31 +76,46 @@ def run_freerun(node: Controller, duration: float) -> int:
     return 0
 
 
-def run_handshake(node: Controller, steps: int) -> int:
-    print(f"[demo] handshake: {steps} step calls")
-    client = node.create_client(Trigger, "/sim/step")
-    if not client.wait_for_service(timeout_sec=5.0):
-        print("[demo] /sim/step not available (is sim running in handshake mode?)", file=sys.stderr)
+def run_sync(node: Controller, steps: int) -> int:
+    """Each /joint_command publish triggers exactly one step on the sim side.
+
+    We wait for /joint_states between publishes to confirm the step landed —
+    otherwise a burst of commands could arrive before sim consumes them and
+    the "one publish = one step" invariant would be observed only approximately.
+    """
+    print(f"[demo] sync: {steps} /joint_command publishes")
+    # Wait for the sim's startup /joint_states so we have a baseline stamp.
+    for _ in range(50):
+        rclpy.spin_once(node, timeout_sec=0.1)
+        if node.latest is not None:
+            break
+    if node.latest is None:
+        print("[demo] no /joint_states received (is sim running?)", file=sys.stderr)
         return 1
+
     for i in range(steps):
         t = i * 0.01
+        prev_stamp = node.latest.header.stamp if node.latest is not None else None
         node.pub.publish(node.make_target(t))
-        rclpy.spin_once(node, timeout_sec=0.0)
-        future = client.call_async(Trigger.Request())
-        rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
-        if future.result() is None or not future.result().success:
-            print(f"[demo] step {i} failed", file=sys.stderr)
+        # Wait for a fresh /joint_states with a newer stamp (= step happened).
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+            if node.latest is not None and node.latest.header.stamp != prev_stamp:
+                break
+        else:
+            print(f"[demo] step {i} timed out waiting for /joint_states", file=sys.stderr)
             return 2
-    print(f"[demo] {steps} steps done, last sim_time in response message above")
+    print(f"[demo] {steps} publishes done")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["freerun", "handshake"], default="freerun")
+    ap.add_argument("--mode", choices=["freerun", "sync"], default="freerun")
     ap.add_argument("--robot", default="ur5e")
     ap.add_argument("--duration", type=float, default=5.0, help="freerun seconds")
-    ap.add_argument("--steps", type=int, default=200, help="handshake step count")
+    ap.add_argument("--steps", type=int, default=200, help="sync step count")
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -111,7 +126,7 @@ def main() -> int:
     try:
         if args.mode == "freerun":
             return run_freerun(node, args.duration)
-        return run_handshake(node, args.steps)
+        return run_sync(node, args.steps)
     finally:
         node.destroy_node()
         rclpy.shutdown()

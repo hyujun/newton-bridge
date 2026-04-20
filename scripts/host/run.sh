@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/host/run.sh                              # up (foreground, robot=ur5e, freerun)
 #   ROBOT=franka ./scripts/host/run.sh                 # pick pack
-#   SYNC_MODE=handshake ./scripts/host/run.sh          # pick sync mode
+#   SYNC_MODE=sync ./scripts/host/run.sh               # pick sync mode
 #   ./scripts/host/run.sh sim                          # same as default up
 #   ./scripts/host/run.sh shell                        # interactive bash
 #   ./scripts/host/run.sh example basic_pendulum       # run a Newton example (viewer gl)
@@ -91,7 +91,7 @@ usage: $0 [sim|shell|example <name>|jupyter|verify|upd|logs|down]
 
 env overrides:
   ROBOT=<name>          robots/<name>/ pack to load (default: ur5e)
-  SYNC_MODE=freerun|handshake
+  SYNC_MODE=freerun|sync
   FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
   VIEWER=rerun|gl|usd|file|null|none  (default: rerun — web viewer at http://localhost:9090)
