@@ -131,24 +131,27 @@ VIEWER=none ./scripts/host/run.sh sim
 
 ---
 
-## Handshake 모드에서의 viewer
+## Sync 모드에서의 viewer
 
-handshake sync 모드에서는 **프레임이 `/sim/step` 또는 `/sim/reset` 호출 시점에만 갱신**됩니다:
+sync 모드에서는 sim 자체가 외부 구동이므로 **프레임은 `/joint_command` 가 들어와서 step 이 실제로 일어날 때만 갱신**됩니다 (또는 `/sim/reset`):
 
 ```bash
-SYNC_MODE=handshake VIEWER=gl ./scripts/host/run.sh sim
-# 창이 뜨지만 frozen. 다른 터미널에서 호출하면 step-by-step 갱신.
-ros2 service call /sim/step std_srvs/srv/Trigger "{}"
+SYNC_MODE=sync VIEWER=gl ./scripts/host/run.sh sim
+# 창이 뜨지만 frozen. 다른 터미널에서 command 를 publish 하면 갱신.
+ros2 topic pub -r 60 /joint_command sensor_msgs/msg/JointState \
+  "{name: [], position: [], velocity: [], effort: []}"
 ```
 
 `__main__.py` 가 이 경고를 터미널에 띄웁니다:
 
 ```
-[newton_bridge] note: handshake mode renders only on /sim/step or /sim/reset;
-                     the viewer will appear frozen until a controller calls those services.
+[newton_bridge] note: sync mode advances only on /joint_command or /sim/reset;
+                     the viewer will appear frozen until a controller publishes commands.
 ```
 
-연속 프레임을 보고 싶으면 `controller_demo.py --mode handshake` 로 루프 콜.
+렌더 rate 은 `sim.viewer_hz` (기본 60Hz) 로 **물리 step rate 와 독립**. 예를 들어 `physics_hz=500` 에 `viewer_hz=60` 이면 step 은 초당 500회 돌더라도 뷰어 draw 는 60회만 발생. `viewer_hz: 0` 으로 두면 매 step 마다 렌더 (옛 동작).
+
+연속 프레임을 보고 싶으면 `controller_demo.py --mode sync` 로 루프 publish.
 
 ---
 

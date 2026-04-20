@@ -11,14 +11,14 @@
 │                                                      │
 │   Custom controller  ─ pub /joint_command            │
 │                      ─ sub /joint_states (use_sim_time)
-│                      ─ call /sim/step  (handshake)   │
+│                      ─ call /sim/reset  (optional)    │
 │                             │                        │
 │   ┌─────────────────────────┴──────────────────────┐ │
 │   │ Container: newton-bridge                        │ │
 │   │   python -m newton_bridge                       │ │
 │   │     ├─ Newton: ModelBuilder + solver step       │ │
 │   │     └─ rclpy: /clock, /joint_states/command,    │ │
-│   │                /sim/step, /sim/reset            │ │
+│   │                /sim/reset                        │ │
 │   └─────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
@@ -47,7 +47,7 @@ VIEWER=none ./scripts/host/run.sh sim # headless
 > **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
 > X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·
 > `usd` / `file` (`workspace/runs/<ts>.{usd,nvpr}` 로 녹화) · `null` (벤치마크) · `none`.
-> `handshake` 모드에서는 `/sim/step` / `/sim/reset` 호출 시점에만 프레임이 갱신됩니다.
+> `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행되며, 렌더는 `sim.viewer_hz` (기본 60Hz) 로 물리 step rate 와 독립.
 
 별도 터미널에서 (호스트):
 
@@ -75,7 +75,7 @@ python3 examples/controller_demo.py --mode freerun --robot ur5e
 | `SYNC_MODE=` | 동작 | 용도 |
 |---|---|---|
 | `freerun` (default) | sim 이 `FREERUN_RATE=realtime\|max` 로 자율 step | 관찰, loose-sync 제어, 데모 |
-| `handshake` | 외부가 `/sim/step` 호출 시에만 1 step | deterministic RL rollout, 결정성 테스트 |
+| `sync` | 외부가 `/joint_command` 를 publish 할 때마다 1 step. idle 시 `ros.sync_timeout_ms` 마다 현재 상태 재퍼블리시 | deterministic RL rollout, 결정성 테스트 |
 
 ## 설치된 Newton extras
 

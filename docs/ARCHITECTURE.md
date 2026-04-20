@@ -25,8 +25,7 @@
 │          ├─ pub  /clock         rosgraph_msgs/Clock        │
 │          ├─ pub  /joint_states  sensor_msgs/JointState     │
 │          ├─ sub  /joint_command sensor_msgs/JointState     │
-│          ├─ srv  /sim/step      std_srvs/Trigger   (HS)    │
-│          └─ srv  /sim/reset     std_srvs/Trigger   (HS)    │
+│          └─ srv  /sim/reset     std_srvs/Trigger           │
 │                                                            │
 └─── network_mode: host, FASTDDS_BUILTIN_TRANSPORTS=UDPv4 ───┘
                               │
@@ -44,33 +43,19 @@
 - `/joint_command` 는 latest-wins. 스텝 진입 직전에 한 번만 drive target 에 반영.
 - 외부 컨트롤러가 `use_sim_time: true` 를 켜면 `/clock` 기준으로 타임스탬프 맞음.
 
-### handshake
+### sync
 
-- sim 은 **자동으로 step 하지 않음**. 외부가 `/sim/step` 서비스를 불러야 1 step 진행.
-- 한 번의 `/sim/step` 콜 내부 순서:
-  1. 직전에 도착한 `/joint_command` 를 drive target 에 write.
-  2. `world.step()`.
-  3. `/joint_states` + `/clock` 퍼블리시.
-  4. `std_srvs/Trigger.Response(success=True, message="sim_time=...")` 반환.
-- 결정성(reproducibility) 우선. 다수 step 이 필요하면 루프로 콜 (`examples/controller_demo.py --mode handshake` 참고).
-- `/sim/reset` 은 home_pose 로 복귀 + 상태 1회 퍼블리시.
-
-### Extension: multi-step srv (미구현)
-
-`std_srvs/Trigger` 는 요청에 인자가 없어서 "N steps per call" 을 못 함. N 번 호출하면 왕복 latency 가 누적됨(잡 스텝당 ~0.5ms). 필요해지면 별도 msg 패키지 도입:
-
-```
-newton_bridge_msgs/srv/SimStep.srv
----
-uint32 steps 1
-sensor_msgs/JointState command      # optional
----
-bool success
-float64 sim_time
-sensor_msgs/JointState state
-```
-
-도입 트리거: handshake 모드에서 `/sim/step` 왕복 latency 가 physics_dt 의 10% 를 넘기는 시점.
+- sim 은 **자동으로 step 하지 않음**. 외부가 `/joint_command` 를 publish 해야 1 step 진행.
+- 한 번의 `/joint_command` 수신 내부 순서 (`SimBridgeNode._on_cmd` 안에서 인라인):
+  1. 메시지 필드를 `_latest_cmd` 로 버퍼링.
+  2. `_apply_latest_cmd()` — drive target 에 write.
+  3. `world.step()` (internal substep 은 `sim.substeps` 수대로).
+  4. `/joint_states` + `/clock` 퍼블리시.
+  5. `sim.viewer_hz` 기준 누산이 차면 viewer 렌더 1프레임.
+- 결정성(reproducibility) 우선. 다수 step 은 publish 를 N 번 반복 (`examples/controller_demo.py --mode sync` 참고).
+- **Idle watchdog** — `/joint_command` 가 `ros.sync_timeout_ms` (기본 100ms) 동안 안 오면, main loop 가 현재 상태를 `/joint_states` 로 재퍼블리시. step 은 하지 않으므로 sim_time 은 멈춘 채, 구독자만 살아 있게 유지.
+- **Render decoupling** — physics 500Hz 라도 `sim.viewer_hz=60` 이면 뷰어 draw 는 60Hz. `viewer_hz=0` 이면 매 step 렌더.
+- `/sim/reset` 은 home_pose 로 복귀 + 상태 1회 퍼블리시 (두 모드 공통).
 
 ## 시간 모델
 
@@ -79,7 +64,8 @@ sensor_msgs/JointState state
 | `physics_hz` | 400Hz | `robot.yaml: sim.physics_hz` |
 | `substeps` | 1 | `robot.yaml: sim.substeps` (solver 안정성용) |
 | `/clock` | publish_rate_hz 에 동기 | `newton_bridge.node` |
-| `/joint_states` | 100Hz (freerun) / step 당 1회 (handshake) | `newton_bridge.node` |
+| `/joint_states` | 100Hz (freerun) / step 당 1회 + watchdog idle republish (sync) | `newton_bridge.node` |
+| viewer 렌더 | `sim.viewer_hz` (기본 60Hz, `physics_hz` 와 독립) | `RenderTicker` in `ticks.py` |
 | 호스트 `use_sim_time` | `/clock` 구독 | 호스트 launch/node 설정 |
 
 ## Robot pack 계약

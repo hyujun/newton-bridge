@@ -33,7 +33,7 @@
 
 | 파일 | 내용 |
 |---|---|
-| [USAGE.md](USAGE.md) | `run.sh` 하위명령 · freerun/handshake 워크플로우 · `/joint_command` 패턴 |
+| [USAGE.md](USAGE.md) | `run.sh` 하위명령 · freerun/sync 워크플로우 · `/joint_command` 패턴 |
 | [CONFIGURATION.md](CONFIGURATION.md) | 전체 env var + `robot.yaml` / `scene.yaml` 스키마 레퍼런스 |
 | [VIEWER.md](VIEWER.md) | `VIEWER` 모드 비교 · X11/Rerun/USD 녹화 |
 | [EXAMPLES.md](EXAMPLES.md) | `controller_demo.py` · 센서 · Jupyter · 벤치마크 · 녹화 |

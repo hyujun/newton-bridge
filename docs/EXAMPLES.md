@@ -6,7 +6,7 @@
 
 | 경로 | 위치 | 용도 |
 |---|---|---|
-| [examples/controller_demo.py](../examples/controller_demo.py) | 호스트 | freerun/handshake E2E 데모 (sine 타겟) |
+| [examples/controller_demo.py](../examples/controller_demo.py) | 호스트 | freerun/sync E2E 데모 (sine 타겟) |
 | [scripts/container/verify.sh](../scripts/container/verify.sh) | 컨테이너 | 11-섹션 smoke test |
 | [scripts/container/rl_smoketest.py](../scripts/container/rl_smoketest.py) | 컨테이너 | torch-cu12 + CUDA 검증 |
 | [scripts/host/verify_ros.sh](../scripts/host/verify_ros.sh) | 호스트 | sim 과 host ROS 2 간 토픽 흐름 확인 |
@@ -64,29 +64,29 @@ python3 examples/controller_demo.py --mode freerun --robot franka
 
 ---
 
-## 2. Handshake — deterministic step loop
+## 2. Sync — deterministic step loop
 
 ```bash
 # 터미널 1
-SYNC_MODE=handshake ./scripts/host/run.sh sim
+SYNC_MODE=sync ./scripts/host/run.sh sim
 
 # 터미널 2
-python3 examples/controller_demo.py --mode handshake --robot ur5e --steps 200
+python3 examples/controller_demo.py --mode sync --robot ur5e --steps 200
 ```
 
 각 iteration:
 1. target = `home + 0.2*sin(i * 0.01)` 계산
-2. `/joint_command` 퍼블리시
-3. `/sim/step` 서비스 콜 (Trigger)
-4. 응답 대기 (`success=True, message="sim_time=..."`)
+2. `/joint_command` 퍼블리시 — sim 측 `_on_cmd` 콜백이 이를 받아 즉시 1 step 실행
+3. `/joint_states` 의 새 `header.stamp` 로 step 완료 확인
 
-200 번 콜 → 총 `200 * physics_dt = 200/400 = 0.5s` 의 sim time 경과.
+200 번 publish → 총 `200 * physics_dt = 200/400 = 0.5s` 의 sim time 경과.
 
 **실패 시**:
 ```
-[demo] /sim/step not available (is sim running in handshake mode?)
+[demo] no /joint_states received (is sim running?)
+[demo] step N timed out waiting for /joint_states
 ```
-→ sim 이 `freerun` 모드로 떠 있음. `SYNC_MODE=handshake` 로 재기동.
+→ sim 이 안 떠 있거나 DDS 매치 실패 (UDP transport / domain id). `SYNC_MODE=sync` 로 기동되어 있는지 확인.
 
 ---
 
@@ -314,7 +314,7 @@ FREERUN_RATE=max VIEWER=null SYNC_MODE=freerun ./scripts/host/run.sh sim
 
 - `FREERUN_RATE=max` — wall-clock sleep 제거
 - `VIEWER=null` — render cost ~0
-- `SYNC_MODE=freerun` — handshake 왕복 latency 제외
+- `SYNC_MODE=freerun` — sync 외부-driven 왕복 latency 제외
 
 다른 터미널:
 

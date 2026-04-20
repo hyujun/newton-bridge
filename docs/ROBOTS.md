@@ -369,7 +369,7 @@ ros2 topic echo /joint_states --once
 | `/joint_states` 는 뜨는데 로봇이 꿈틀대기만 함 (MJCF) | `solver: mujoco` 인데 MJCF 에 `<actuator>` 가 없음 | `solver: xpbd` 로 바꾸고 `drive.stiffness/damping` 부여 |
 | `/joint_states` 가 뜨는데 값이 NaN 또는 폭주 | PD gain 너무 높음, 또는 `physics_hz` 대비 `substeps` 부족 | `stiffness` 를 10× 줄이거나 `substeps: 2~4`, `physics_hz: 1000` 시도 |
 | 다중-DoF joint (spherical, free) 의 home_pose 가 틀림 | `_apply_home_pose` 는 첫 component 만 세팅 ([src/newton_bridge/world.py](../src/newton_bridge/world.py)) | multi-DoF 를 쓰려면 `world.py` 의 home_pose 로직을 per-component 로 확장 |
-| handshake 에서 state 가 업데이트 안 됨 | `/sim/step` 콜 없이 `/joint_states` 기다림 | `ros2 service call /sim/step std_srvs/srv/Trigger {}` 로 한 step |
+| sync 에서 state 가 업데이트 안 됨 | `/joint_command` publish 없이 `/joint_states` 기다림 | `ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState "{name: [], position: [], velocity: [], effort: []}"` 로 한 step |
 
 더 깊은 디버깅은 [ARCHITECTURE.md §알려진 이슈](ARCHITECTURE.md#알려진-이슈) 참조.
 

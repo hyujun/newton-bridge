@@ -231,7 +231,7 @@ int32 iterations
 - `enable_ik: true` 일 때 pack 이 요구하는 필드 검증 (default_link 존재 등)
 
 **verify.sh §14 신규** (container, rclpy):
-- UR5e pack 로드 → 노드 띄움 (handshake mode)
+- UR5e pack 로드 → 노드 띄움 (sync mode)
 - 별도 프로세스에서 `rclpy` 클라이언트로 `/ik/solve` 호출:
   - `target_pose` = 현재 forward-kinematics 결과 (자기 자신의 pose)
   - 기대: `success=true`, `positions` 이 현재 q 와 근사

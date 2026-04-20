@@ -7,7 +7,7 @@
 | Direction | Topic | Type | Rate | QoS | Note |
 |---|---|---|---|---|---|
 | pub | `/clock` | `rosgraph_msgs/Clock` | physics_hz 또는 publish 시점 | Reliable, depth=10 | 외부 노드는 `use_sim_time: true` 로 구독 |
-| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (handshake) | Reliable, depth=10 | `name` 순서는 `robot.yaml: joint_names`. position/velocity/effort 3필드 모두 채움 |
+| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (sync) + `sync_timeout_ms` idle republish | Reliable, depth=10 | `name` 순서는 `robot.yaml: joint_names`. position/velocity/effort 3필드 모두 채움 |
 | pub | `/tf` | `tf2_msgs/TFMessage` | `/joint_states` 와 동일 시점 | Reliable, depth=10 | `ros.publish_tf` (default `true`) 로 on/off. 각 body 를 `tf_root_frame` 의 child 로 퍼블리시 |
 | sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position/velocity/effort 필드 각각 드라이브 채널로 매핑 (아래 §) |
 | sub | `/sim/set_gravity` | `geometry_msgs/Vector3` | latest-wins | Reliable, depth=10 | 런타임 gravity 변경; Phase 6a. 단위 m/s² |
@@ -16,7 +16,7 @@
 
 - **단위**: position = radian (revolute), velocity = rad/s, effort = N·m.
 - **이름**: `robot.yaml: joint_names` 가 authoritative. 컨트롤러가 일부만 보내도 sim 은 매칭되는 것만 반영하고 나머지는 마지막 target 유지.
-- **효과 시점**: freerun 에서는 다음 `world.step()` 직전에 반영. handshake 에서는 `/sim/step` 콜 시점의 latest-wins.
+- **효과 시점**: freerun 에서는 다음 `world.step()` 직전에 반영. sync 에서는 `/joint_command` 수신 콜백이 직접 1 step 을 실행 (publish = step trigger).
 
 ### `/joint_command` 4채널 해석
 
@@ -94,21 +94,23 @@ ros:
 
 **주의**: Newton 이 world-frame pose 만 제공하므로, 현재 구현은 킨매틱 트리가 아닌 **평탄한 world → each-body** 구조를 퍼블리시합니다. `robot_state_publisher` 와 호환되는 parent→child 체인은 URDF 를 재파싱해야 하므로 별도 phase 대상.
 
-## Services (handshake mode only)
+## Services
 
 | Service | Type | Semantics |
 |---|---|---|
-| `/sim/step` | `std_srvs/Trigger` | apply latest `/joint_command` → step 1 → publish state → return `success=true, message='sim_time=...'` |
-| `/sim/reset` | `std_srvs/Trigger` | restore `home_pose`, zero velocities, publish state |
+| `/sim/reset` | `std_srvs/Trigger` | restore `home_pose`, zero velocities, publish state. 두 모드 모두 available |
+
+`/sim/step` 은 제거되었습니다 — sync 모드에서 step 트리거 역할을 `/joint_command` publish 가 대신합니다.
 
 ### 사용 예
 
 ```bash
-# 한 스텝
-ros2 service call /sim/step std_srvs/srv/Trigger "{}"
-
-# 복귀
+# 복귀 (freerun / sync 공통)
 ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
+
+# sync 모드에서 1 step 진행 (= /joint_command publish 1회)
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: [], position: [], velocity: [], effort: []}"
 ```
 
 스크립트 예시: [examples/controller_demo.py](../examples/controller_demo.py).
@@ -130,17 +132,14 @@ ros:
 
 지금은 arm-only (franka 7 DoF) 로 통일. gripper 필요해지면 `extra_topics:` 스키마 + 스트림 분기 로직을 [src/newton_bridge/node.py](../src/newton_bridge/node.py) 에 추가.
 
-## Extension: per-step srv (미구현)
-
-`std_srvs/Trigger` 는 인자가 없어서 "N-step per call" 이 불가. 필요해지면 `newton_bridge_msgs/srv/SimStep.srv` 를 도입 (uint32 steps + optional command, response에 state 포함). 트리거는 [ARCHITECTURE.md](ARCHITECTURE.md#extension-multi-step-srv-미구현) 참조.
-
 ## Sync mode 요약
 
-| | freerun | handshake |
+| | freerun | sync |
 |---|---|---|
-| sim step | 자율 | `/sim/step` 콜 |
-| `/clock` publish | publish 시점마다 | 매 step |
-| `/joint_states` | `publish_rate_hz` | 매 step |
+| sim step | 자율 | `/joint_command` publish 수신 시 |
+| `/clock` publish | publish 시점마다 | 매 step + watchdog idle republish |
+| `/joint_states` | `publish_rate_hz` | 매 step + `sync_timeout_ms` idle republish |
+| 뷰어 렌더 | `sim.viewer_hz` 로 제한 | `sim.viewer_hz` 로 제한 |
 | 사용 케이스 | 관찰/로깅, loose-sync 제어 | RL rollout, deterministic 테스트 |
 
-env var 로 선택: `SYNC_MODE=freerun` (기본) | `SYNC_MODE=handshake`.
+env var 로 선택: `SYNC_MODE=freerun` (기본) | `SYNC_MODE=sync`. legacy `handshake` 값은 deprecation 경고 후 `sync` 로 treat.

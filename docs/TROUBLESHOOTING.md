@@ -231,7 +231,7 @@ ros2 topic list
 
 **freerun 모드**: `publish_rate_hz` 가 호스트 ROS 2 노드 기준이므로 호스트에서 측정. 컨테이너 안에서는 `ros2 topic hz` 가 sub 를 뜨면서 DDS discovery 타이밍이 꼬일 수 있음.
 
-**handshake 모드**: `/sim/step` 을 호출하지 않으면 state 퍼블리시 자체가 안 됨. 다른 터미널에서 호출하거나 `controller_demo.py --mode handshake` 로 루프.
+**sync 모드**: `/joint_command` 가 한 번도 publish 되지 않았고 `sync_timeout_ms` (기본 100ms) 도 안 지났다면 초기 startup publish 1회만 보임. 주기적 command 를 내리거나 `controller_demo.py --mode sync` 로 루프.
 
 ### `/joint_command` 를 퍼블리시해도 로봇이 안 움직임
 
@@ -284,15 +284,18 @@ drive:
   stiffness: 1000.0    # 10× 감소
 ```
 
-### handshake 에서 state 가 업데이트 안 됨
+### sync 에서 state 가 업데이트 안 됨
 
-`/sim/step` 호출 필요:
+`/joint_command` publish 필요 (publish 1회 = 1 step):
 
 ```bash
-ros2 service call /sim/step std_srvs/srv/Trigger "{}"
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: [], position: [], velocity: [], effort: []}"
 ```
 
-반환 메시지에 `sim_time=...` 가 있으면 정상.
+빈 배열은 "channel 건드리지 않음" 으로 해석되어 target 은 그대로 두고 step 만 진행됩니다. `/joint_states` 가 새 stamp 로 돌아오는지 확인하세요.
+
+`/joint_command` 가 끊겼는데도 `/joint_states` 가 `sync_timeout_ms` (기본 100ms) 주기로 오면 idle watchdog 동작 — step 은 안 일어나고 현재 상태만 재퍼블리시.
 
 ---
 
@@ -343,12 +346,13 @@ ros2 service call /sim/step std_srvs/srv/Trigger "{}"
 
 실패해도 sim 은 headless 로 계속 진행됩니다 ([__main__.py:62](../src/newton_bridge/__main__.py#L62)).
 
-### Viewer 가 frozen (handshake 모드)
+### Viewer 가 frozen (sync 모드)
 
-**의도된 동작**: handshake 는 `/sim/step` 호출 시점에만 frame 갱신. 다른 터미널에서:
+**의도된 동작**: sync 는 `/joint_command` 수신 시에만 sim 이 진행하고 `sim.viewer_hz` 에 맞춰 프레임을 갱신. 다른 터미널에서 command 를 publish:
 
 ```bash
-ros2 service call /sim/step std_srvs/srv/Trigger "{}"
+ros2 topic pub -r 60 /joint_command sensor_msgs/msg/JointState \
+  "{name: [], position: [], velocity: [], effort: []}"
 ```
 
 또는 freerun 으로 전환:

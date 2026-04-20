@@ -21,9 +21,9 @@
 
 ```bash
 ROBOT=franka ./scripts/host/run.sh sim                            # pack 만 변경
-SYNC_MODE=handshake ./scripts/host/run.sh sim                     # sync mode 변경
+SYNC_MODE=sync ./scripts/host/run.sh sim                          # sync mode 변경
 VIEWER=gl ./scripts/host/run.sh sim                               # 네이티브 X11 창
-ROBOT=kuka_iiwa_14 SYNC_MODE=handshake VIEWER=none \
+ROBOT=kuka_iiwa_14 SYNC_MODE=sync VIEWER=none \
     ./scripts/host/run.sh sim                                     # 전부 조합
 ```
 
@@ -63,24 +63,35 @@ python3 examples/controller_demo.py --mode freerun --robot ur5e --duration 10
 
 외부 컨트롤러는 `use_sim_time: true` 를 켜고 `/clock` 을 구독하면 sim 시간 기준으로 스탬프가 맞습니다.
 
-### C. Handshake (deterministic)
+### C. Sync (deterministic, externally driven)
+
+sync 모드는 **`/joint_command` publish 1회 = 1 step**. 시간을 전적으로 외부가 소유합니다.
 
 ```bash
-# 터미널 1 — sim (handshake)
-SYNC_MODE=handshake ./scripts/host/run.sh sim
+# 터미널 1 — sim (sync)
+SYNC_MODE=sync ./scripts/host/run.sh sim
 
 # 터미널 2
 source /opt/ros/jazzy/setup.bash
 export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 
-ros2 service call /sim/step std_srvs/srv/Trigger "{}"     # 1 step
-ros2 service call /sim/reset std_srvs/srv/Trigger "{}"    # home 복귀
+# target 변경 + 1 step 진행
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: ['shoulder_pan_joint'], position: [0.3]}"
 
-# 또는 demo 스크립트
-python3 examples/controller_demo.py --mode handshake --robot ur5e --steps 200
+# home 복귀 (언제든 가능)
+ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
+
+# 또는 demo 스크립트 (N 번 publish + /joint_states 로 진행 확인)
+python3 examples/controller_demo.py --mode sync --robot ur5e --steps 200
 ```
 
-handshake 에서는 `/sim/step` 호출 전까지 시간이 멈춰 있고, viewer 도 frozen. 콜 시점에만 1 step 진행 + `/joint_states` + `/clock` 퍼블리시 + viewer 렌더.
+동작 요약:
+- `/joint_command` 수신 시점에만 `world.step()` 1회 + `/joint_states` + `/clock` 퍼블리시
+- `/joint_command` 가 끊기면 `ros.sync_timeout_ms` (기본 100ms) 후 현재 상태만 재퍼블리시 (step 없음) — 구독자가 굶지 않도록
+- `sim.viewer_hz` (기본 60) 로 뷰어 렌더가 제한됨 — 500Hz physics 라도 뷰어는 60Hz
+
+Legacy `SYNC_MODE=handshake` 도 동작하지만 deprecation 경고 후 `sync` 로 treat.
 
 ### D. 로봇 전환
 
@@ -138,7 +149,7 @@ position: [0.0, -1.2, 1.5, -1.57, -1.57, 0.0]
 
 타이밍:
 - freerun: 다음 `world.step()` 직전에 반영 (latest-wins)
-- handshake: `/sim/step` 호출 시점의 latest-wins
+- sync: `/joint_command` 수신 시점에 1 step 실행 (publish = step trigger)
 
 토픽/서비스 전체 계약은 [TOPICS.md](TOPICS.md).
 

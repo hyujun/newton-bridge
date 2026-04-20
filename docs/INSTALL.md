@@ -216,7 +216,7 @@ ${EDITOR:-nano} .env
 |---|---|---|
 | `ROS_DOMAIN_ID` | `0` | 다른 도메인 쓰면 호스트/컨테이너 양쪽 맞추기 |
 | `ROBOT_PACK` | `/workspace/robots/ur5e` | 기본 로봇 pack (셸에서 `ROBOT=franka` 가 더 간편) |
-| `SYNC_MODE` | `freerun` | `handshake` 로 바꾸면 deterministic |
+| `SYNC_MODE` | `freerun` | `sync` 로 바꾸면 deterministic (외부 `/joint_command` 가 step 트리거) |
 | `FREERUN_RATE` | `realtime` | `max` = 벤치마크 |
 | `NVIDIA_VISIBLE_DEVICES` | `all` | `0` / `0,1` 로 GPU 격리 |
 | `JUPYTER_TOKEN` | `newton` | `run.sh jupyter` 기본 토큰 |
