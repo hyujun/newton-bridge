@@ -77,16 +77,23 @@ def main() -> int:
 
     rclpy.init(args=None)
     node = SimBridgeNode(world, sync_mode, viewer=viewer)
+    node.ready_log_info = (
+        f"Newton ready: dof={world.total_dof}, "
+        f"joints={len(world.joint_dof_names)}, dt={world.physics_dt:.6f}s, "
+        f"solver={pack['sim'].get('solver', 'xpbd')}, "
+        f"sync={sync_mode}, viewer={viewer_mode}"
+    )
 
     def _sigint(*_):
         node.get_logger().warning("shutdown signal received")
-        rclpy.shutdown()
+        node.request_shutdown()
     signal.signal(signal.SIGINT, _sigint)
     signal.signal(signal.SIGTERM, _sigint)
 
     try:
         if sync_mode == "handshake":
-            rclpy.spin(node)
+            while rclpy.ok() and not node.shutdown_requested:
+                rclpy.spin_once(node, timeout_sec=0.1)
         else:
             node.run_freerun(rate_mode)
     finally:

@@ -41,6 +41,9 @@ class SimBridgeNode(Node):
         self.sync_mode = sync_mode
         self.viewer = viewer
         self.pack = world.pack
+        self.shutdown_requested = False
+        self.ready_log_info: str | None = None
+        self._ready_logged = False
 
         ros_cfg = self.pack["ros"]
         self._joint_names: list[str] = list(self.pack["joint_names"])
@@ -136,6 +139,10 @@ class SimBridgeNode(Node):
     def _on_step(self, request, response):
         self._apply_latest_cmd()
         self.world.step()
+        if not self._ready_logged:
+            if self.ready_log_info is not None:
+                self.get_logger().info(self.ready_log_info)
+            self._ready_logged = True
         self._publish_state(force=True)
         self._render_viewer()
         response.success = True
@@ -279,19 +286,28 @@ class SimBridgeNode(Node):
         self.viewer.log_state(self.world.state_0)
         self.viewer.end_frame()
 
+    def request_shutdown(self) -> None:
+        self.shutdown_requested = True
+
     # -- freerun main loop --------------------------------------------------
     def run_freerun(self, rate_mode: str) -> None:
         realtime = rate_mode != "max"
         next_wall = time.monotonic()
-        while rclpy.ok():
+        while rclpy.ok() and not self.shutdown_requested:
             if self.viewer is not None and not self.viewer.is_running():
                 self.get_logger().info("viewer window closed; shutting down")
                 break
             paused = self.viewer is not None and self.viewer.is_paused()
             rclpy.spin_once(self, timeout_sec=0.0)
+            if self.shutdown_requested:
+                break
             if not paused:
                 self._apply_latest_cmd()
                 self.world.step()
+                if not self._ready_logged:
+                    if self.ready_log_info is not None:
+                        self.get_logger().info(self.ready_log_info)
+                    self._ready_logged = True
                 self._publish_state(force=False)
             self._render_viewer()
             if realtime and not paused:
