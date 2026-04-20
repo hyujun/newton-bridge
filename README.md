@@ -4,8 +4,6 @@
 
 `network_mode: host` 로 컨테이너의 DDS 참여자가 호스트와 동일 도메인에 속하므로, 호스트에서 `ros2 topic list` 로 바로 `/clock`, `/joint_states`, `/joint_command` 가 보입니다.
 
-English summary: [docs/en/README.md](docs/en/README.md)
-
 ## 한눈에
 
 ```
@@ -124,15 +122,23 @@ newton-bridge/
 ├── workspace/                     호스트↔컨테이너 공유 (outputs, notebooks)
 ├── assets/_cache/                 fetch_assets.sh 의 상류 클론 (gitignored, ~2 GB)
 └── docs/
-    ├── SETUP.md / ARCHITECTURE.md / TOPICS.md / ROBOTS.md
-    └── en/README.md               영문 요약
+    ├── README.md                  docs 인덱스 + 역할별 진입점
+    ├── INSTALL.md / USAGE.md / CONFIGURATION.md / VIEWER.md
+    ├── TROUBLESHOOTING.md / EXAMPLES.md
+    └── ARCHITECTURE.md / TOPICS.md / ROBOTS.md / DEFERRED_WORK.md
 ```
 
 ## 관련 문서
 
-- [docs/SETUP.md](docs/SETUP.md) — 호스트 prereq, 최초 기동, DDS 설정
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 레이어 경계, sync 모델, 시간 모델
+전체 목록 + 역할별 진입점은 [docs/README.md](docs/README.md).
+
+- [docs/INSTALL.md](docs/INSTALL.md) — 호스트 prereq · 이미지 빌드 · verify
+- [docs/USAGE.md](docs/USAGE.md) — `run.sh` 하위명령 + 일상 워크플로우
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — env var + pack yaml 레퍼런스
+- [docs/VIEWER.md](docs/VIEWER.md) — viewer 모드 (rerun/gl/usd/file/null/none)
+- [docs/EXAMPLES.md](docs/EXAMPLES.md) — controller_demo · 센서 · Jupyter · 벤치
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — 단계별 실패 모드 + 조치
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 레이어 경계, sync/time 모델
 - [docs/TOPICS.md](docs/TOPICS.md) — 토픽/서비스 계약, 확장 경로
-- [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가, URDF/xacro/MJCF 연동
-- [docs/en/README.md](docs/en/README.md) — 영문 요약
+- [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가 (URDF/xacro/MJCF)
 - Newton 공식: <https://newton-physics.github.io/newton/latest/>
