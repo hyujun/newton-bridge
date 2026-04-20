@@ -48,6 +48,7 @@ class NewtonWorld:
         self._build_model()
         self._build_solver()
         self._build_view()
+        self.last_contacts = None  # populated by step(); used by sensors
         self._control_target_pos_host = np.zeros(self.total_dof, dtype=np.float32)
         self._control_target_vel_host = np.zeros(self.total_dof, dtype=np.float32)
         self._control_effort_host = np.zeros(self.total_dof, dtype=np.float32)
@@ -318,11 +319,15 @@ class NewtonWorld:
     # -- NEWTON API SURFACE -------------------------------------------------
     def step(self) -> None:
         dt = self.physics_dt / self.substeps
+        contacts = None
         for _ in range(self.substeps):
             contacts = self.model.collide(self.state_0)
             self.state_0.clear_forces()
             self.solver.step(self.state_0, self.state_1, self.control, contacts, dt)
             self.state_0, self.state_1 = self.state_1, self.state_0
+        # Expose the post-step contacts so downstream sensors (Phase 5) can
+        # read without calling m.collide() again.
+        self.last_contacts = contacts
         self.sim_time += self.physics_dt
 
     def reset(self) -> None:

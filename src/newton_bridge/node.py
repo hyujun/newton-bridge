@@ -19,13 +19,19 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState, Imu
 from rosgraph_msgs.msg import Clock
 from std_srvs.srv import Trigger
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, WrenchStamped
 from tf2_msgs.msg import TFMessage
 
 from .world import NewtonWorld
+from .sensors import (
+    SensorBundle,
+    build_sensors,
+    contact_force_vec3,
+    imu_readings,
+)
 
 
 class SimBridgeNode(Node):
@@ -75,6 +81,22 @@ class SimBridgeNode(Node):
             if self._publish_tf_enabled
             else None
         )
+
+        # Phase 5: sensors. Build after model is up; publishers are per-sensor.
+        self.sensors: SensorBundle = build_sensors(self.pack, world.model)
+        self._contact_pubs = {
+            spec.label: self.create_publisher(WrenchStamped, spec.topic, qos)
+            for spec in self.sensors.contact
+        }
+        self._imu_pubs = {
+            spec.label: self.create_publisher(Imu, spec.topic, qos)
+            for spec in self.sensors.imu
+        }
+        if not self.sensors.empty():
+            self.get_logger().info(
+                f"sensors: {len(self.sensors.contact)} contact, "
+                f"{len(self.sensors.imu)} imu"
+            )
 
         if self.sync_mode == "handshake":
             self.srv_step = self.create_service(Trigger, "/sim/step", self._on_step)
@@ -171,6 +193,7 @@ class SimBridgeNode(Node):
         self.pub_state.publish(msg)
         self._publish_clock()
         self._publish_tf(now_stamp)
+        self._publish_sensors(now_stamp)
 
     def _publish_tf(self, stamp) -> None:
         if self.pub_tf is None:
@@ -201,6 +224,45 @@ class SimBridgeNode(Node):
             tr.transform.rotation.w = qw
             tfm.transforms.append(tr)
         self.pub_tf.publish(tfm)
+
+    def _publish_sensors(self, stamp) -> None:
+        if self.sensors.empty():
+            return
+        contacts = self.world.last_contacts
+        state = self.world.state_0
+
+        for spec in self.sensors.contact:
+            if contacts is None:
+                continue
+            spec.sensor.update(state, contacts)
+            fx, fy, fz = contact_force_vec3(spec)
+            msg = WrenchStamped()
+            msg.header.stamp = stamp
+            msg.header.frame_id = spec.frame_id
+            msg.wrench.force.x = fx
+            msg.wrench.force.y = fy
+            msg.wrench.force.z = fz
+            # torque stays zero — SensorContact.total_force is vec3, not wrench
+            self._contact_pubs[spec.label].publish(msg)
+
+        for spec in self.sensors.imu:
+            spec.sensor.update(state)
+            r = imu_readings(spec)
+            msg = Imu()
+            msg.header.stamp = stamp
+            msg.header.frame_id = spec.frame_id
+            ax, ay, az = r["linear_acceleration"]
+            gx, gy, gz = r["angular_velocity"]
+            msg.linear_acceleration.x = ax
+            msg.linear_acceleration.y = ay
+            msg.linear_acceleration.z = az
+            msg.angular_velocity.x = gx
+            msg.angular_velocity.y = gy
+            msg.angular_velocity.z = gz
+            # orientation unknown -> -1 on [0] signals the field is unset
+            # (sensor_msgs/Imu convention)
+            msg.orientation_covariance[0] = -1.0
+            self._imu_pubs[spec.label].publish(msg)
 
     def _render_viewer(self) -> None:
         if self.viewer is None:

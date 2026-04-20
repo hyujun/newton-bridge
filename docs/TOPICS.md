@@ -51,6 +51,33 @@ effort: [5.0]
 "
 ```
 
+## Sensors (Phase 5)
+
+`scene.yaml` 의 `sensors:` 블록으로 contact / IMU 센서를 선언하면, 각 센서마다 **표준 ROS msg** 토픽이 자동 등록됩니다. 커스텀 msg 패키지는 사용하지 않습니다 (결정 E).
+
+```yaml
+sensors:
+  contact:
+    - label: ee
+      bodies: ["*wrist_3_link*"]   # fnmatch glob (body_label 매칭)
+      # shapes: [...]               # 또는 shape 기준 (택일)
+      measure_total: true            # default true (aggregate over matched bodies)
+      topic: /contact_wrenches/ee    # optional (default: /contact_wrenches/<label>)
+      frame_id: wrist_3_link
+  imu:
+    - label: base_imu
+      sites: [base_site]             # MJCF 의 site 라벨 (URDF 는 site 가 없음)
+      topic: /imu/base
+      frame_id: base_link
+```
+
+| 센서 | 토픽 타입 | 내용 |
+|---|---|---|
+| contact | `geometry_msgs/WrenchStamped` | `force` = `SensorContact.total_force` 합산; `torque` 는 0 (Newton 1.1.0 은 vec3 만 제공) |
+| imu | `sensor_msgs/Imu` | `linear_acceleration`, `angular_velocity` 채움; `orientation_covariance[0]=-1` (orientation 미제공) |
+
+**주의**: `SensorIMU` 는 Newton의 **site** 개념이 필요하므로 MJCF 소스 pack 에서만 의미 있습니다. URDF pack 에 붙이려면 로더 레벨에서 `builder.add_site(...)` 를 수동으로 호출해야 합니다.
+
 ## `/tf` (Phase 4)
 
 각 body 의 world-frame pose 를 `tf_root_frame` (default `world`) → `<body_label>` transform 으로 퍼블리시합니다. publish rate 은 `/joint_states` 와 동일 시점 (같은 `header.stamp`).

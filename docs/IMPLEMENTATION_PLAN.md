@@ -281,7 +281,20 @@ kill $PID 2>/dev/null
 
 ---
 
-### Phase 5 — Contact / IMU 센서 — ⏳ PENDING
+### Phase 5 — Contact / IMU 센서 — ✅ COMPLETED
+
+**구현 노트**:
+- 새 모듈 `src/newton_bridge/sensors.py`: `SensorContact` / `SensorIMU` 래핑,
+  msg 변환 헬퍼.
+- yaml 키는 `bodies`/`shapes` (contact) / `site`/`sites` (imu) — Newton 내부
+  인자 `sensing_obj_bodies` 등은 노출하지 않음.
+- contact force 는 vec3 (Newton 1.1.0 제약) → `WrenchStamped.torque` 는 0.
+- IMU 는 site 필요 → MJCF pack 에서만 의미 있음 (URDF 는 수동 site 추가 필요).
+- `world.last_contacts` 를 expose 해서 sensor.update 가 `m.collide()` 재호출
+  없이 접근. `world.step()` 에서 세팅.
+- body label 은 articulation prefix 를 포함하므로 fnmatch glob 권장
+  (e.g. `"*wrist_3_link*"`).
+
 
 **목적**: `SensorContact` → `/contact_wrenches`, `SensorIMU` → `/imu/<site>`. 모두 **표준 msg**만 사용 (결정 E).
 
@@ -426,7 +439,7 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | 1 | ✅ completed | 64858ed | ArticulationView refactor — pattern in pack yaml |
 | 3 | ✅ completed | bdb4205 | 4-channel actuation + per-joint drive overrides |
 | 4 | ✅ completed | 9c733ee | JointState vel+effort + /tf default ON |
-| 2 | ⏳ pending | — | scene.yaml unification (robot.yaml auto-shim) |
+| 2 | ✅ completed | a7b0a80 | scene.yaml unification (robot.yaml auto-shim) |
 | 5 | ⏳ pending | — | Contact + IMU sensors (standard msgs) |
 | 7 | ⏳ pending | — | Viewer factory + Rerun default |
 | 6a | ⏳ pending | — | solver_params + /sim/set_gravity |

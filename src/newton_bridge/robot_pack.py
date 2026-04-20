@@ -78,6 +78,10 @@ def _promote_robot_yaml(cfg: dict, pack_dir: Path) -> dict:
         "ros": dict(cfg.get("ros", {}) or {}),
     }
     scene["ros"].setdefault("primary_articulation", articulation_label)
+    # Optional scene-level blocks introduced in later phases — carry through if
+    # present on a legacy robot.yaml (e.g. sensors: from Phase 5).
+    if "sensors" in cfg:
+        scene["sensors"] = cfg["sensors"]
     return scene
 
 

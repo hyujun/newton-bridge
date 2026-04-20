@@ -208,6 +208,40 @@ except ValueError:
 print("ok: drive override merge + mode parsing")
 PY
 
+banner "9. SensorContact builds + publishes without NaN"
+run "SensorContact wired through scene.sensors" python3 - <<'PY'
+import os, numpy as np
+os.environ['ROBOT_PACK'] = '/workspace/robots/ur5e'
+import warp as wp; wp.init()
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+from newton_bridge.sensors import build_sensors, contact_force_vec3
+
+pack = load_pack(Path(os.environ['ROBOT_PACK']))
+# Inject a sensors block at runtime (simulates a scene.yaml with Phase 5
+# sensors). Body label includes articulation prefix, so use a glob.
+pack["sensors"] = {
+    "contact": [
+        {"label": "base", "bodies": ["*base_link*"],
+         "topic": "/contact_wrenches/base", "frame_id": "base_link",
+         "measure_total": True},
+    ],
+}
+world = NewtonWorld(pack)
+bundle = build_sensors(pack, world.model)
+assert len(bundle.contact) == 1 and bundle.contact[0].label == "base"
+
+# Step + update sensor
+for _ in range(20):
+    world.step()
+bundle.contact[0].sensor.update(world.state_0, world.last_contacts)
+fx, fy, fz = contact_force_vec3(bundle.contact[0])
+# UR5e at rest on ground: some non-NaN force, roughly gravity-opposing.
+assert np.isfinite(fx) and np.isfinite(fy) and np.isfinite(fz), (fx, fy, fz)
+print(f"ok: contact force=({fx:+.2f}, {fy:+.2f}, {fz:+.2f}) N")
+PY
+
 banner "Summary"
 printf 'passed: %d   failed: %d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"
