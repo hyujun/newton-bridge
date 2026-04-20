@@ -460,6 +460,6 @@ python3 examples/controller_demo.py --robot ur5e --mode freerun
 | 2 | ✅ completed | a7b0a80 | scene.yaml unification (robot.yaml auto-shim) |
 | 5 | ✅ completed | 8c9e110 | Contact + IMU sensors (standard msgs) |
 | 7 | ✅ completed | b793d56 | Viewer factory + Rerun default |
-| 6a | ⏳ pending | — | solver_params + /sim/set_gravity |
+| 6a | ✅ completed | c49900b | solver_params + /sim/set_gravity |
 
 **완료 정의**: 해당 phase의 unit test + verify.sh 관련 섹션이 모두 통과.
