@@ -103,8 +103,11 @@ worlds:
     gravity: [0.0, 0.0, -9.81]       # optional, sim.gravity override
     articulations:
       - label: arm                   # 고유, ros.primary_articulation 이 가리킴
-        source: urdf                 # urdf | mjcf
+        source: urdf                 # urdf | xacro | mjcf
         source_rel: models/ur5e.urdf # pack dir 기준 상대경로
+        source_args:                 # xacro 전용. xacro.process_file 의 mappings= 로 전달.
+          ur_type: ur5e              #   모든 값은 문자열로 캐스팅됨.
+          name: ur5e
         xform:
           pos: [0.0, 0.0, 0.0]       # 월드 좌표
           rot: [0.0, 0.0, 0.0, 1.0]  # quaternion xyzw
@@ -162,8 +165,10 @@ ros:
 
 ```yaml
 robot:
-  source: urdf
-  source_rel: models/ur5e.urdf
+  source: urdf                       # urdf | xacro | mjcf
+  source_rel: models/ur5e.urdf       # xacro 일 땐 `.xacro` 파일 경로
+  source_args:                       # xacro 전용, 미지정 시 빈 dict
+    ur_type: ur5e
   base_position: [0.0, 0.0, 0.0]
 
 sim:
@@ -215,7 +220,7 @@ ros:
 | MJCF (no `<actuator>`) | `xpbd` / `featherstone` | `drive.stiffness/damping` 이 사용됨 |
 
 실제 pack 들:
-- `ur5e` — URDF + `mujoco` (실험 결과 XPBD 불일치)
+- `ur5e` — xacro → URDF + `mujoco`. `$(find ur_description)` 은 apt `ros-jazzy-ur-description` 이 제공. `package://` 메쉬는 `resolve-robotics-uri-py` 가 `AMENT_PREFIX_PATH` 로 해석 (실험 결과 XPBD 불일치)
 - `franka` — MJCF + `mujoco` (`panda.xml` 에 actuator 포함)
 - `kuka_iiwa_14` — MJCF + `mujoco`
 

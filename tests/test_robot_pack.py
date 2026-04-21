@@ -20,12 +20,29 @@ ROBOTS = REPO_ROOT / "robots"
 def test_pack_parses(name: str) -> None:
     cfg = load_pack(ROBOTS / name)
     assert cfg["_pack_dir"] == ROBOTS / name
-    assert cfg["robot"]["source"] in {"urdf", "mjcf"}
+    assert cfg["robot"]["source"] in {"urdf", "xacro", "mjcf"}
     assert cfg["robot"]["source_rel"].startswith("models/")
     assert cfg["sim"]["physics_hz"] > 0
     assert cfg["joint_names"], "joint_names must be non-empty"
     for joint in cfg.get("home_pose", {}):
         assert joint in cfg["joint_names"], f"home_pose key {joint!r} not in joint_names"
+
+
+def test_ur5e_exposes_xacro_source_args() -> None:
+    cfg = load_pack(ROBOTS / "ur5e")
+    assert cfg["robot"]["source"] == "xacro"
+    args = cfg["robot"].get("source_args", {})
+    assert args.get("ur_type") == "ur5e"
+    assert args.get("name") == "ur5e"
+    # Mirrored on the primary articulation in the scene shape.
+    art = cfg["worlds"][0]["articulations"][0]
+    assert art["source_args"] == args
+
+
+def test_source_args_default_empty_for_non_xacro_packs() -> None:
+    for name in ("franka", "kuka_iiwa_14"):
+        cfg = load_pack(ROBOTS / name)
+        assert cfg["robot"].get("source_args", {}) == {}
 
 
 def test_missing_pack_raises(tmp_path: Path) -> None:

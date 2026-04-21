@@ -13,8 +13,9 @@ Scene shape (canonical):
         gravity: [x,y,z] | None     # overrides sim.gravity
         articulations:
           - label: str              # unique within scene
-            source: urdf | mjcf
-            source_rel: str         # relative to pack dir
+            source: urdf | mjcf | xacro
+            source_rel: str         # relative to pack dir (xacro: .xacro file)
+            source_args: {key: val} # xacro-only, passed as xacro mappings
             xform: {pos:[x,y,z], rot:[x,y,z,w]}   # default identity
             articulation_pattern: str (fnmatch, default "*")
             joint_names: [str, ...] # ROS-exposed subset
@@ -58,6 +59,7 @@ def _promote_robot_yaml(cfg: dict, pack_dir: Path) -> dict:
         "label": articulation_label,
         "source": robot.get("source"),
         "source_rel": robot.get("source_rel"),
+        "source_args": dict(robot.get("source_args", {}) or {}),
         "xform": {"pos": list(base_pos), "rot": [0.0, 0.0, 0.0, 1.0]},
         "articulation_pattern": cfg.get("articulation_pattern", "*"),
         "joint_names": list(cfg.get("joint_names", []) or []),
@@ -130,6 +132,7 @@ def _flatten_primary_aliases(scene: dict) -> None:
     scene["robot"] = {
         "source": primary["source"],
         "source_rel": primary["source_rel"],
+        "source_args": dict(primary.get("source_args", {}) or {}),
         "base_position": list(primary.get("xform", {}).get("pos", [0.0, 0.0, 0.0])),
     }
     scene["articulation_pattern"] = primary.get("articulation_pattern", "*")

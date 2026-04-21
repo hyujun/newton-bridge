@@ -33,7 +33,7 @@ def test_legacy_robot_yaml_shims_to_scene(name: str) -> None:
     assert scene["ros"]["primary_articulation"] == name
 
     # Legacy top-level aliases still present
-    assert scene["robot"]["source"] in {"urdf", "mjcf"}
+    assert scene["robot"]["source"] in {"urdf", "xacro", "mjcf"}
     assert scene["joint_names"], "joint_names must be mirrored"
     assert "drive" in scene
 

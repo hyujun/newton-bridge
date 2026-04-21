@@ -2,8 +2,14 @@
 # Source: ur_description (BSD-3). Copied in by scripts/host/fetch_assets.sh.
 
 robot:
-  source: urdf
-  source_rel: models/ur5e.urdf
+  source: xacro
+  source_rel: models/ur.urdf.xacro
+  # xacro args passed as `mappings=` to xacro.process_file. The upstream
+  # ur.urdf.xacro defaults `ur_type` to a nonsense placeholder so the robot
+  # type MUST be set here. `name` becomes the <robot name="..."> attribute.
+  source_args:
+    name: ur5e
+    ur_type: ur5e
   base_position: [0.0, 0.0, 0.0]
 
 sim:

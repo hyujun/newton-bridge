@@ -197,7 +197,7 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
 
         ${SUDO} apt-get update
         ${SUDO} apt-get install -y --no-install-recommends \
-            ros-jazzy-desktop ros-jazzy-ur-description
+            ros-jazzy-desktop ros-jazzy-ur-description ros-jazzy-xacro
     fi
 fi
 

@@ -49,6 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-rosgraph-msgs \
         ros-jazzy-geometry-msgs \
         ros-jazzy-rclpy \
+        # xacro CLI + python module; ur_description ships the meshes/configs
+        # that xacro's $(find ur_description) resolves to at runtime.
+        ros-jazzy-xacro \
+        ros-jazzy-ur-description \
         python3-colcon-common-extensions \
         python3-argcomplete \
         # Newton guide §4 — OpenGL / rendering deps (+ libgles2 for EGL headless §9)
@@ -89,6 +93,11 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
         "newton[torch-cu12]" \
         --extra-index-url https://download.pytorch.org/whl/cu128
+
+# resolve-robotics-uri-py lets newton's URDF importer resolve `package://` mesh
+# URIs against AMENT_PREFIX_PATH (populated when /opt/ros/jazzy/setup.bash is
+# sourced by entrypoint.sh). Required when feeding xacro-generated URDF.
+RUN pip install --no-cache-dir resolve-robotics-uri-py
 
 # -- newton_bridge package (editable install; src/ bind-mounted at runtime) ---
 # Copy pyproject + package so `pip install -e .` resolves the package layout.

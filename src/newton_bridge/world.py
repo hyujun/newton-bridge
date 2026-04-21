@@ -7,6 +7,7 @@ moves things around.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -72,10 +73,42 @@ class NewtonWorld:
             builder.add_urdf(
                 src_path, xform=xform, floating=False, enable_self_collisions=False
             )
+        elif src_fmt == "xacro":
+            # Process xacro in-process → URDF XML string, then hand it to the
+            # URDF importer via a tempfile. (Passing XML directly trips a bug
+            # where newton's importer calls os.path.abspath on the string for
+            # package:// resolution, producing nonsense paths.) The tempfile
+            # also lets resolve-robotics-uri-py fall back to AMENT_PREFIX_PATH
+            # for `package://ur_description/...` meshes.
+            import tempfile
+            from .xacro_loader import process_xacro
+            urdf_xml = process_xacro(
+                src_path, args=self.pack["robot"].get("source_args") or {}
+            )
+            # Write to the OS temp dir (not pack_dir — it may be a read-only
+            # bind-mount in the container). package:// URIs in the URDF are
+            # resolved by resolve-robotics-uri-py via AMENT_PREFIX_PATH and
+            # don't depend on the URDF's on-disk location.
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".urdf", delete=False
+            ) as fh:
+                fh.write(urdf_xml)
+                urdf_tmp = fh.name
+            try:
+                builder.add_urdf(
+                    urdf_tmp, xform=xform, floating=False, enable_self_collisions=False
+                )
+            finally:
+                try:
+                    Path(urdf_tmp).unlink()
+                except OSError:
+                    pass
         elif src_fmt == "mjcf":
             builder.add_mjcf(src_path, xform=xform, floating=False)
         else:
-            raise ValueError(f"unknown robot.source: {src_fmt!r} (expected urdf|mjcf)")
+            raise ValueError(
+                f"unknown robot.source: {src_fmt!r} (expected urdf|xacro|mjcf)"
+            )
 
         if self.pack["sim"].get("ground_plane", True):
             builder.add_ground_plane()
