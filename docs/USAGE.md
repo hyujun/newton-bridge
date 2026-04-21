@@ -86,7 +86,7 @@ python3 examples/controller_demo.py --mode sync --robot ur5e --steps 200
 동작 요약:
 - `/joint_command` 수신 시점에만 `world.step()` 1회 + `/joint_states` + `/clock` 퍼블리시
 - `/joint_command` 가 끊기면 `ros.sync_timeout_ms` (기본 100ms) 후 현재 상태만 재퍼블리시 (step 없음) — 구독자가 굶지 않도록
-- `sim.viewer_hz` (기본 60) 로 뷰어 렌더가 제한됨 — 500Hz physics 라도 뷰어는 60Hz
+- `sim.viewer_hz` (기본 60) 는 wall-clock 뷰어 FPS 목표 — physics rate / 커맨드 rate 와 독립, 저주기 커맨드 중에도 뷰어는 60Hz 로 draw
 
 Legacy `SYNC_MODE=handshake` 도 동작하지만 deprecation 경고 후 `sync` 로 treat.
 

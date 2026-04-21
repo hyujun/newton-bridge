@@ -47,7 +47,7 @@ VIEWER=none ./scripts/host/run.sh sim # headless
 > **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
 > X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·
 > `usd` / `file` (`workspace/runs/<ts>.{usd,nvpr}` 로 녹화) · `null` (벤치마크) · `none`.
-> `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행되며, 렌더는 `sim.viewer_hz` (기본 60Hz) 로 물리 step rate 와 독립.
+> `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행되며, 렌더는 `sim.viewer_hz` (기본 60Hz) 로 wall-clock 기준 — physics rate / 커맨드 rate 와 독립.
 
 별도 터미널에서 (호스트):
 

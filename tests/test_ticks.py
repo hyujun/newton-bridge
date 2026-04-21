@@ -13,49 +13,78 @@ from newton_bridge.ticks import CommandWatchdog, RenderTicker
 
 # ---------- RenderTicker ---------------------------------------------------
 
-def test_render_60hz_over_500hz_ratio() -> None:
-    t = RenderTicker(render_hz=60, physics_dt=1.0 / 500)
-    hits = sum(1 for _ in range(5000) if t.tick())
-    # 5000 physics steps at 500Hz = 10s sim time. At 60Hz that is 600 frames.
-    assert 590 <= hits <= 610, hits
+def test_render_first_tick_fires_immediately() -> None:
+    # First tick should always return True so initial state renders right away.
+    t = RenderTicker(render_hz=60)
+    assert t.tick(now=100.0) is True
+
+
+def test_render_waits_render_dt_between_fires() -> None:
+    t = RenderTicker(render_hz=60)
+    t.tick(now=0.0)  # arm first frame
+    # Just under render_dt: no fire.
+    assert t.tick(now=1.0 / 60 - 0.001) is False
+    # Just over render_dt: fire.
+    assert t.tick(now=1.0 / 60 + 0.001) is True
+
+
+def test_render_longrun_rate_matches_target() -> None:
+    # Poll at 1 kHz for 10s wall time; 60Hz target should yield ~600 fires.
+    t = RenderTicker(render_hz=60)
+    now = 0.0
+    hits = 0
+    for _ in range(10_000):
+        if t.tick(now=now):
+            hits += 1
+        now += 1.0 / 1000
+    assert 595 <= hits <= 605, hits
+
+
+def test_render_decoupled_from_poll_rate() -> None:
+    # Polling at 200Hz or 1000Hz should both produce ~60Hz fires over the
+    # same wall window — the whole point of wall-clock decoupling.
+    def hits_at(poll_hz: int, seconds: float) -> int:
+        t = RenderTicker(render_hz=60)
+        step = 1.0 / poll_hz
+        now = 0.0
+        n = 0
+        for _ in range(int(poll_hz * seconds)):
+            if t.tick(now=now):
+                n += 1
+            now += step
+        return n
+
+    assert abs(hits_at(200, 5.0) - 300) <= 5
+    assert abs(hits_at(1000, 5.0) - 300) <= 5
 
 
 def test_render_hz_zero_is_passthrough() -> None:
-    t = RenderTicker(render_hz=0, physics_dt=1.0 / 500)
+    t = RenderTicker(render_hz=0)
     assert t.passthrough is True
     assert all(t.tick() for _ in range(100))
 
 
 def test_render_hz_none_is_passthrough() -> None:
-    t = RenderTicker(render_hz=None, physics_dt=1.0 / 500)
+    t = RenderTicker(render_hz=None)
     assert t.passthrough is True
     assert all(t.tick() for _ in range(100))
 
 
-def test_render_exact_boundary_triggers_once() -> None:
-    # render_hz == physics_hz: every tick should fire.
-    t = RenderTicker(render_hz=500, physics_dt=1.0 / 500)
-    hits = sum(1 for _ in range(50) if t.tick())
-    assert hits == 50
+def test_render_dt_property() -> None:
+    assert RenderTicker(render_hz=60).render_dt == pytest.approx(1.0 / 60)
+    assert RenderTicker(render_hz=0).render_dt == 0.0
 
 
-def test_render_ticker_half_rate() -> None:
-    # render_hz is half of physics_hz: fire every other tick.
-    t = RenderTicker(render_hz=250, physics_dt=1.0 / 500)
-    results = [t.tick() for _ in range(10)]
-    # Pattern: True/False alternation (first tick hits at dt == render_dt).
-    assert sum(results) == 5
-
-
-def test_render_ticker_rejects_zero_dt() -> None:
-    with pytest.raises(ValueError):
-        RenderTicker(render_hz=60, physics_dt=0.0)
-
-
-def test_render_ticker_custom_dt_override() -> None:
-    t = RenderTicker(render_hz=60, physics_dt=1.0 / 500)
-    # Feed a giant dt — should still fire exactly once per tick call.
-    assert t.tick(dt=1.0) is True
+def test_render_hitch_does_not_burst() -> None:
+    # Long gap (simulated pause) should yield one fire on resume, not a
+    # burst of catch-up frames.
+    t = RenderTicker(render_hz=60)
+    t.tick(now=0.0)
+    # Jump forward 10 seconds — 600 periods elapsed.
+    assert t.tick(now=10.0) is True
+    # Immediately after, we should be back to normal cadence (no burst).
+    assert t.tick(now=10.0 + 0.001) is False
+    assert t.tick(now=10.0 + 1.0 / 60 + 0.001) is True
 
 
 # ---------- CommandWatchdog ------------------------------------------------

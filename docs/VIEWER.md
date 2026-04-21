@@ -149,7 +149,7 @@ ros2 topic pub -r 60 /joint_command sensor_msgs/msg/JointState \
                      the viewer will appear frozen until a controller publishes commands.
 ```
 
-렌더 rate 은 `sim.viewer_hz` (기본 60Hz) 로 **물리 step rate 와 독립**. 예를 들어 `physics_hz=500` 에 `viewer_hz=60` 이면 step 은 초당 500회 돌더라도 뷰어 draw 는 60회만 발생. `viewer_hz: 0` 으로 두면 매 step 마다 렌더 (옛 동작).
+렌더 rate 은 `sim.viewer_hz` (기본 60Hz) 로 **wall-clock 기준**. 물리 step rate / 커맨드 publish rate 와 무관하므로, freerun 이 realtime 을 놓치거나 sync 모드에서 저주기 커맨드가 들어와도 뷰어는 항상 초당 viewer_hz 프레임을 목표로 draw. `viewer_hz: 0` 으로 두면 throttle 없이 매 tick 마다 렌더.
 
 연속 프레임을 보고 싶으면 `controller_demo.py --mode sync` 로 루프 publish.
 

@@ -160,7 +160,8 @@ def load_pack(pack_dir: Path) -> dict:
     scene.setdefault("sim", {})
     scene.setdefault("ros", {})
     # Defaults injected here so downstream readers don't re-encode them.
-    # viewer_hz: 0/None means "render every physics step" (no throttle).
+    # viewer_hz: target viewer FPS in **wall-clock** time (decoupled from
+    # physics_hz and command rate). 0/None disables throttling.
     # sync_timeout_ms: in sync mode, republish last state if no /joint_command
     # arrives within this window.
     scene["sim"].setdefault("viewer_hz", 60)

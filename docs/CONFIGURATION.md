@@ -96,8 +96,9 @@ sim:
     angular_damping: 0.1             # solver 별 키/값은 Newton 문서 참조
   ground_plane: true                 # add_ground_plane()
   gravity: [0.0, 0.0, -9.81]         # m/s², 월드 기본값
-  viewer_hz: 60                      # 뷰어 렌더 rate. 0 이면 물리 step 마다 렌더.
-                                     # physics_hz 와 독립 — 500Hz 물리 + 60Hz 뷰어 가능
+  viewer_hz: 60                      # 뷰어 렌더 rate (wall-clock). 0 이면 throttle 없음.
+                                     # physics_hz / 커맨드 rate 와 무관 — 500Hz 물리 또는
+                                     # sync 모드 저주기 커맨드여도 항상 초당 60프레임 목표
 
 worlds:
   - label: env0                      # 고유 label (현재 1개만 허용)

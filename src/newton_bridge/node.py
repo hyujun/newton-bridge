@@ -55,10 +55,10 @@ class SimBridgeNode(Node):
         self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
         self._pub_interval: float = 1.0 / self._publish_rate_hz
 
-        # Render cadence decoupled from physics step rate. viewer_hz=0/None
-        # means "render every physics step".
+        # Render cadence is wall-clock, independent of physics step rate.
+        # viewer_hz=0/None means "render every time tick() is polled".
         viewer_hz = sim_cfg.get("viewer_hz", 60)
-        self._render_ticker = RenderTicker(viewer_hz, world.physics_dt)
+        self._render_ticker = RenderTicker(viewer_hz)
 
         # Watchdog used only in sync mode — armed lazily in run_sync().
         self._sync_timeout_s: float = float(ros_cfg.get("sync_timeout_ms", 100)) / 1000.0
@@ -123,7 +123,7 @@ class SimBridgeNode(Node):
         self.srv_reset = self.create_service(Trigger, "/sim/reset", self._on_reset)
 
         render_note = (
-            f"render @ {viewer_hz:.0f}Hz" if viewer_hz else "render every step"
+            f"render @ {viewer_hz:.0f}Hz (wall)" if viewer_hz else "render every tick"
         )
         if self.sync_mode == "sync":
             self.get_logger().info(
@@ -361,8 +361,12 @@ class SimBridgeNode(Node):
         self._publish_state(force=True)
         self._render_if_due()
         # Spin timeout chosen to divide the watchdog window ~5 ways so the
-        # republish jitter stays below ~20% of sync_timeout_ms.
+        # republish jitter stays below ~20% of sync_timeout_ms. When a viewer
+        # is attached, also cap at half the render period so wall-clock render
+        # polling doesn't alias below viewer_hz.
         spin_timeout = min(0.02, self._sync_timeout_s / 5.0)
+        if self.viewer is not None and not self._render_ticker.passthrough:
+            spin_timeout = min(spin_timeout, self._render_ticker.render_dt / 2.0)
         while rclpy.ok() and not self.shutdown_requested:
             if self.viewer is not None and not self.viewer.is_running():
                 self.get_logger().info("viewer window closed; shutting down")
@@ -371,8 +375,8 @@ class SimBridgeNode(Node):
             if self.shutdown_requested:
                 break
             if self._cmd_watchdog.is_stale(time.monotonic()):
-                # Stale: republish current state (no step, no render) so
-                # downstream tools that polled for /joint_states keep seeing
-                # fresh timestamps. Render stays tied to actual simulation
-                # progress.
+                # Stale: republish current state (no step) so downstream tools
+                # that polled for /joint_states keep seeing fresh timestamps.
                 self._publish_state(force=True)
+            # Keep viewer at viewer_hz wall-clock regardless of command rate.
+            self._render_if_due()

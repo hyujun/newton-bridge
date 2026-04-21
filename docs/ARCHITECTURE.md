@@ -51,10 +51,10 @@
   2. `_apply_latest_cmd()` — drive target 에 write.
   3. `world.step()` (internal substep 은 `sim.substeps` 수대로).
   4. `/joint_states` + `/clock` 퍼블리시.
-  5. `sim.viewer_hz` 기준 누산이 차면 viewer 렌더 1프레임.
+  5. 별도 wall-clock 타이머에서 `sim.viewer_hz` 주기로 viewer 렌더 (step 과 동기 아님).
 - 결정성(reproducibility) 우선. 다수 step 은 publish 를 N 번 반복 (`examples/controller_demo.py --mode sync` 참고).
 - **Idle watchdog** — `/joint_command` 가 `ros.sync_timeout_ms` (기본 100ms) 동안 안 오면, main loop 가 현재 상태를 `/joint_states` 로 재퍼블리시. step 은 하지 않으므로 sim_time 은 멈춘 채, 구독자만 살아 있게 유지.
-- **Render decoupling** — physics 500Hz 라도 `sim.viewer_hz=60` 이면 뷰어 draw 는 60Hz. `viewer_hz=0` 이면 매 step 렌더.
+- **Render decoupling** — 렌더는 wall-clock `sim.viewer_hz` 로 폴링. physics_hz 나 `/joint_command` rate 와 무관하게 뷰어 draw 는 언제나 viewer_hz 목표. `viewer_hz=0` 이면 throttle 없이 매 tick 렌더.
 - `/sim/reset` 은 home_pose 로 복귀 + 상태 1회 퍼블리시 (두 모드 공통).
 
 ## 시간 모델
@@ -65,7 +65,7 @@
 | `substeps` | 1 | `robot.yaml: sim.substeps` (solver 안정성용) |
 | `/clock` | publish_rate_hz 에 동기 | `newton_bridge.node` |
 | `/joint_states` | 100Hz (freerun) / step 당 1회 + watchdog idle republish (sync) | `newton_bridge.node` |
-| viewer 렌더 | `sim.viewer_hz` (기본 60Hz, `physics_hz` 와 독립) | `RenderTicker` in `ticks.py` |
+| viewer 렌더 | `sim.viewer_hz` (기본 60Hz, wall-clock, physics/커맨드 rate 와 독립) | `RenderTicker` in `ticks.py` |
 | 호스트 `use_sim_time` | `/clock` 구독 | 호스트 launch/node 설정 |
 
 ## Robot pack 계약
