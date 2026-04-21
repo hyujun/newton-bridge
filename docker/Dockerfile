@@ -42,6 +42,7 @@ RUN add-apt-repository universe \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # ROS 2 Jazzy (headless ros-base is enough; no GUI from ROS side)
         ros-jazzy-ros-base \
+        ros-jazzy-rmw-cyclonedds-cpp \
         ros-jazzy-rmw-fastrtps-cpp \
         ros-jazzy-sensor-msgs \
         ros-jazzy-std-srvs \

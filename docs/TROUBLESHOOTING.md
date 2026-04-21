@@ -215,17 +215,48 @@ docker compose -f docker/compose.yml run --rm newton-bridge nvidia-smi
 
 **증상**: 컨테이너 안에서는 `/joint_states` 가 보이는데 호스트에서는 빈 리스트.
 
-**원인 (대부분)**: `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` 누락 — Fast DDS SHM 전송이 UID 경계에서 조용히 실패.
+**원인 1 — RMW 불일치**: 컨테이너와 호스트의 `RMW_IMPLEMENTATION` 이 다르면 discovery 실패. 컨테이너 기본은 `rmw_cyclonedds_cpp`.
 
 **조치 (호스트 쉘)**:
 ```bash
 export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ros2 topic list
 ```
 
-`.bashrc` 에 박아두면 영구. 컨테이너는 `compose.yml` 에 이미 세팅되어 있음.
+**원인 2 — FastDDS SHM 깨짐** (FastDDS 를 쓰는 경우에만): SHM 전송이 컨테이너/호스트 UID 경계에서 조용히 실패.
+
+**조치**:
+```bash
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTDDS_BUILTIN_TRANSPORTS=UDPv4   # FastDDS 에서만 필수
+ros2 topic list
+```
+
+**원인 3 — Cyclone 멀티캐스트 차단**: 네트워크가 멀티캐스트를 막으면 Cyclone discovery 도 실패 (host network mode 에선 드묾). `CYCLONEDDS_URI` 로 XML 설정을 주입해 loopback/unicast 로 고정:
+
+```xml
+<!-- ~/.cyclonedds.xml -->
+<CycloneDDS>
+  <Domain>
+    <General>
+      <Interfaces><NetworkInterface name="lo"/></Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers><Peer address="localhost"/></Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
+```
+```bash
+export CYCLONEDDS_URI=file:///home/$USER/.cyclonedds.xml
+```
+컨테이너와 호스트 양쪽에서 같은 파일을 참조해야 하며, compose.yml 의 `environment` 에 `- CYCLONEDDS_URI=${CYCLONEDDS_URI-}` 를 추가하고 XML 을 bind-mount 로 얹으면 됨.
+
+`.bashrc` 에 env 를 박아두면 영구. 컨테이너 기본값은 `compose.yml` 에 이미 세팅되어 있음.
 
 ### 컨테이너에서 `ros2 topic hz /joint_states` 가 0Hz
 

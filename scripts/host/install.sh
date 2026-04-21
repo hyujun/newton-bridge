@@ -171,10 +171,12 @@ fi
 
 # -- 4) (optional) ROS 2 Jazzy Desktop ---------------------------------------
 if [[ "${WITH_ROS}" -eq 1 ]]; then
-    if has_ros_jazzy && dpkg -s ros-jazzy-ur-description >/dev/null 2>&1; then
-        log "ROS 2 Jazzy Desktop + ur_description already installed — skipping"
+    if has_ros_jazzy \
+        && dpkg -s ros-jazzy-ur-description >/dev/null 2>&1 \
+        && dpkg -s ros-jazzy-rmw-cyclonedds-cpp >/dev/null 2>&1; then
+        log "ROS 2 Jazzy Desktop + ur_description + rmw packages already installed — skipping"
     else
-        log "installing ROS 2 Jazzy Desktop + ur_description"
+        log "installing ROS 2 Jazzy Desktop + ur_description + both rmw implementations"
 
         if ! locale -a 2>/dev/null | grep -qi 'en_US\.utf8'; then
             ${SUDO} apt-get install -y --no-install-recommends locales
@@ -197,7 +199,8 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
 
         ${SUDO} apt-get update
         ${SUDO} apt-get install -y --no-install-recommends \
-            ros-jazzy-desktop ros-jazzy-ur-description ros-jazzy-xacro
+            ros-jazzy-desktop ros-jazzy-ur-description ros-jazzy-xacro \
+            ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-rmw-fastrtps-cpp
     fi
 fi
 

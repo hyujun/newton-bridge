@@ -27,10 +27,11 @@ services:
       # -- ROS 2 DDS config -------------------------------------------------
       - ROS_DISTRO=jazzy
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
-      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
-      # FastDDS SHM transport breaks across UID boundaries; force UDPv4 on
-      # both container and host (export the same var in your host shell).
-      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      # FastDDS-only knob: SHM transport breaks across UID boundaries, so force
+      # UDPv4 when the user opts into FastDDS. scripts/host/run.sh exports this
+      # conditionally; the `-` form forwards only when set on the host.
+      - FASTDDS_BUILTIN_TRANSPORTS=${FASTDDS_BUILTIN_TRANSPORTS-}
       # -- newton_bridge config --------------------------------------------
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
       - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | sync

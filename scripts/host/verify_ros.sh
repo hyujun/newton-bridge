@@ -5,10 +5,12 @@ set -eu
 
 log() { printf '\033[1;34m[verify-ros]\033[0m %s\n' "$*"; }
 
-# FastDDS must match the container transport.
-export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# FastDDS-only: force UDPv4 so SHM doesn't break at the UID boundary.
+if [[ "${RMW_IMPLEMENTATION}" == "rmw_fastrtps_cpp" ]]; then
+    export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
+fi
 
 if [[ ! -f /opt/ros/jazzy/setup.bash ]]; then
     cat >&2 <<'EOF'

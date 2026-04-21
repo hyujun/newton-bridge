@@ -351,7 +351,6 @@ ls robots/myarm/models/
 ROBOT=myarm ./scripts/host/run.sh sim
 # 다른 터미널(호스트):
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic hz /joint_states
 ros2 topic echo /joint_states --once
 ```

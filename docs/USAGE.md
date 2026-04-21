@@ -39,7 +39,6 @@ ROBOT=kuka_iiwa_14 SYNC_MODE=sync VIEWER=none \
 
 # 터미널 2 — 호스트에서 관찰
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic list                        # /clock /joint_states /joint_command /tf
 ros2 topic hz /joint_states            # ~100Hz
 ros2 topic echo --once /joint_states
@@ -57,7 +56,6 @@ ros2 topic echo --once /joint_states
 
 # 터미널 2 — 커스텀 컨트롤러 (호스트)
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 python3 examples/controller_demo.py --mode freerun --robot ur5e --duration 10
 ```
 
@@ -73,7 +71,6 @@ SYNC_MODE=sync ./scripts/host/run.sh sim
 
 # 터미널 2
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 
 # target 변경 + 1 step 진행
 ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \

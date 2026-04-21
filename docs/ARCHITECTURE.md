@@ -27,9 +27,9 @@
 │          ├─ sub  /joint_command sensor_msgs/JointState     │
 │          └─ srv  /sim/reset     std_srvs/Trigger           │
 │                                                            │
-└─── network_mode: host, FASTDDS_BUILTIN_TRANSPORTS=UDPv4 ───┘
+└─── network_mode: host, RMW=rmw_cyclonedds_cpp (default) ───┘
                               │
-                              ▼ (DDS UDPv4)
+                              ▼ (DDS / UDP)
                          host ROS 2 graph
 ```
 

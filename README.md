@@ -53,7 +53,8 @@ VIEWER=none ./scripts/host/run.sh sim # headless
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+# RMW 기본값은 Cyclone DDS (컨테이너와 자동 일치). FastDDS 쓰려면
+# export RMW_IMPLEMENTATION=rmw_fastrtps_cpp && export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic hz /joint_states
 python3 examples/controller_demo.py --mode freerun --robot ur5e
 ```

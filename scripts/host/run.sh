@@ -30,9 +30,17 @@ fi
 : "${SYNC_MODE:=freerun}"
 : "${FREERUN_RATE:=realtime}"
 : "${ROS_DOMAIN_ID:=0}"
-: "${RMW_IMPLEMENTATION:=rmw_fastrtps_cpp}"
+: "${RMW_IMPLEMENTATION:=rmw_cyclonedds_cpp}"
 : "${VIEWER:=rerun}"
 export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION VIEWER
+
+# FastDDS only: force UDPv4 because shared-memory transport breaks at the
+# container/host UID boundary. Cyclone DDS has no equivalent knob and doesn't
+# need one.
+if [[ "${RMW_IMPLEMENTATION}" == "rmw_fastrtps_cpp" ]]; then
+    : "${FASTDDS_BUILTIN_TRANSPORTS:=UDPv4}"
+    export FASTDDS_BUILTIN_TRANSPORTS
+fi
 
 # Deprecation shim: ENABLE_VIEWER=1 was replaced by VIEWER=gl in Phase 7.
 if [[ "${ENABLE_VIEWER:-0}" != "0" ]]; then

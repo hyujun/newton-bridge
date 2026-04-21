@@ -181,23 +181,21 @@ URDF / MJCF / mesh 파일은 라이선스·크기 이유로 gitignore. 재실행
 
 # 터미널 B — 호스트에서 ROS 2 토픽 확인
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4   # 필수 — SHM 금지
-./scripts/host/verify_ros.sh
+./scripts/host/verify_ros.sh   # RMW / transport env 자동 세팅
 ```
 
 `ros2 topic hz /joint_states` 가 ~100Hz 로 뜨면 설치 + 빌드 성공. 이후 일상 사용은 [USAGE.md](USAGE.md).
 
 ### 호스트 ROS 2 환경 변수
 
-컨테이너와 호스트가 DDS 토픽을 주고받으려면 **세 변수가 동일**해야 합니다. `.bashrc` 에 박아두면 편함:
+컨테이너와 호스트가 DDS 토픽을 주고받으려면 **`ROS_DOMAIN_ID` 와 `RMW_IMPLEMENTATION` 이 동일**해야 합니다. 기본값 (Cyclone DDS + domain 0) 이면 아무 설정 없이도 동작하지만, 명시하고 싶다면 `.bashrc` 에:
 
 ```bash
 export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4   # SHM 전송 금지 (UID 경계 때문)
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
-`FASTDDS_BUILTIN_TRANSPORTS=UDPv4` 가 빠지면 **silent drop**: 컨테이너 안에서는 토픽 리스트가 보이는데 호스트는 안 보임.
+FastDDS 를 쓸 경우 (`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`) 에는 **반드시** `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` 도 같이 export 해야 합니다. SHM 전송이 컨테이너/호스트 UID 경계에서 조용히 깨지기 때문 — 빠지면 컨테이너 안에서는 토픽이 보이는데 호스트에서는 **silent drop**. `scripts/host/run.sh` 와 `verify_ros.sh` 는 RMW 값을 보고 자동으로 export 합니다.
 
 ---
 

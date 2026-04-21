@@ -25,7 +25,6 @@
 
 # 터미널 2 — 호스트 controller
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 python3 examples/controller_demo.py --mode freerun --robot ur5e --duration 10
 ```
 
@@ -144,7 +143,6 @@ ROBOT=myarm ./scripts/host/run.sh sim
 
 # 6) 호스트에서 확인
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic echo --once /joint_states
 # positions 가 myarm 의 home_pose 와 일치해야 함
 ```
@@ -184,7 +182,6 @@ sensors:
 
 # 3) 호스트에서 구독
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic echo /contact_wrenches/ee
 ```
 
@@ -210,7 +207,6 @@ IMU 센서는 MJCF pack 에서만 직접 — URDF 는 site 개념이 없어 수�
 ./scripts/host/run.sh sim
 # 다른 터미널
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 run tf2_tools view_frames          # frames.pdf 생성
 # 또는
 ros2 topic echo /tf --once
@@ -230,7 +226,6 @@ ros:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 rviz2
 # Add → TF
 # Fixed Frame: world
@@ -320,7 +315,6 @@ FREERUN_RATE=max VIEWER=null SYNC_MODE=freerun ./scripts/host/run.sh sim
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 ros2 topic hz /clock
 # physics_hz 대비 실제 sim rate 측정. UR5e@400Hz 는 RTX 3070 Ti 에서 대략 ~4000Hz
 ```
