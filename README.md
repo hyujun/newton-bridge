@@ -53,7 +53,7 @@ EXTERNAL_PACK_HOST=$HOME/my_robot_description ./scripts/host/run.sh sim
 > **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
 > X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·
 > `usd` / `file` (`workspace/runs/<ts>.{usd,nvpr}` 로 녹화) · `null` (벤치마크) · `none`.
-> `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행되며, 렌더는 `sim.viewer_hz` (기본 60Hz) 로 wall-clock 기준 — physics rate / 커맨드 rate 와 독립.
+> `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행됩니다. Viewer 는 별도 thread 에서 `sim.viewer_hz` (기본 60Hz) 로 wall-clock pacing — physics/cmd rate 와 독립이고, sync 모드 idle 중에도 마지막 snapshot 을 60Hz 로 계속 redraw 하므로 창이 얼어붙지 않습니다. 시뮬 헬스는 1Hz `[newton_bridge] step ... cmd ... state=...` stderr 라인 + `/sim/diagnostics` 토픽으로 노출.
 
 별도 터미널에서 (호스트):
 
@@ -104,8 +104,11 @@ newton-bridge/
 │   ├── __main__.py                `python -m newton_bridge` entry point
 │   ├── world.py                   NewtonWorld (ModelBuilder + solver)
 │   ├── node.py                    SimBridgeNode (rclpy pubs/subs/services)
+│   ├── snapshot.py                StateSnapshot (main → viewer 이중버퍼)
+│   ├── viewer_thread.py           ViewerThread (별도 thread + viewer pacing)
+│   ├── telemetry.py               RateMeter / TelemetryRegistry / StatusLogger
 │   ├── robot_pack.py              robot.yaml loader
-│   └── viewer.py                  optional Newton GL viewer
+│   └── viewer.py                  optional Newton GL viewer 팩토리
 ├── docker/                        Docker 전부
 │   ├── Dockerfile                 CUDA 12.9 + Ubuntu 24.04 + ROS 2 Jazzy + Newton[전체]
 │   ├── compose.yml                GPU + X11 + network_mode:host + ROS env

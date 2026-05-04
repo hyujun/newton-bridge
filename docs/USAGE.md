@@ -199,6 +199,26 @@ latest-wins, 단위 m/s².
 
 ---
 
+## 시뮬 건강 모니터링
+
+Sync 모드에서는 viewer 가 그려지고 있어도 physics 가 실제로 돌고 있는지 한눈에 보기 어렵습니다. Bridge 는 두 채널로 상태를 노출합니다.
+
+**Terminal**: 1Hz stderr 라인. 평소엔 INFO, STALL 일 땐 WARN 으로 자동 승격:
+```
+[newton_bridge] sim 12.34s | step 240Hz (rt 1.00) | cmd 100Hz | pub 100Hz | render 60Hz | state=RUNNING
+```
+끄려면 `STATUS_LOG_HZ=0`.
+
+**ROS**: `/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`, 1Hz):
+```bash
+ros2 topic echo /sim/diagnostics
+```
+RViz `Diagnostics` 패널, `rqt_runtime_monitor`, 또는 사용자 dashboard 에 직접 연결 가능. STALL 시 `status[].level=WARN`.
+
+state 분류와 메트릭 정의는 [CONFIGURATION.md §Telemetry & 진단](CONFIGURATION.md#telemetry--진단) 참조.
+
+---
+
 ## /tf 트리 확인
 
 ```bash

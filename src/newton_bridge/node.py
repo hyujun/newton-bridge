@@ -1,18 +1,26 @@
 """SimBridgeNode: rclpy node that connects NewtonWorld to ROS 2 topics/services.
 
 Topics (standard types, stable contract):
-    pub  /clock           rosgraph_msgs/Clock    (every physics step)
-    pub  /joint_states    sensor_msgs/JointState (rate-limited in freerun,
-                                                  per-step in sync +
-                                                  watchdog republish when idle)
-    sub  /joint_command   sensor_msgs/JointState (position targets, rad;
-                                                  partial name match OK).
-                                                  In sync mode, arrival of a
-                                                  command triggers one physics
-                                                  step.
+    pub  /clock             rosgraph_msgs/Clock    (every physics step)
+    pub  /joint_states      sensor_msgs/JointState (rate-limited in freerun,
+                                                    per-step in sync +
+                                                    watchdog republish when idle)
+    pub  /sim/diagnostics   diagnostic_msgs/DiagnosticArray  (1Hz telemetry)
+    sub  /joint_command     sensor_msgs/JointState (position targets, rad;
+                                                    partial name match OK).
+                                                    In sync mode, arrival of a
+                                                    command triggers one physics
+                                                    step.
 
 Services:
     /sim/reset  std_srvs/Trigger   restore pack.home_pose, publish state
+
+Threading:
+    Physics + ROS callbacks run on the main thread. Rendering runs on the
+    `ViewerThread` (see viewer_thread.py); the main thread publishes a state
+    snapshot via `StateSnapshot.publish()` after every step. This keeps a
+    slow viewer from stalling physics and lets the viewer keep animating at
+    viewer_hz wall-clock when physics is idle.
 """
 
 from __future__ import annotations
@@ -27,9 +35,17 @@ from rosgraph_msgs.msg import Clock
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import TransformStamped, Vector3, WrenchStamped
 from tf2_msgs.msg import TFMessage
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
 from .world import NewtonWorld
-from .ticks import CommandWatchdog, RenderTicker
+from .ticks import CommandWatchdog
+from .snapshot import StateSnapshot
+from .viewer_thread import ViewerThread
+from .telemetry import (
+    STATE_STALL,
+    StatusLogger,
+    TelemetryRegistry,
+)
 from .sensors import (
     SensorBundle,
     build_sensors,
@@ -39,11 +55,21 @@ from .sensors import (
 
 
 class SimBridgeNode(Node):
-    def __init__(self, world: NewtonWorld, sync_mode: str, viewer=None) -> None:
+    def __init__(
+        self,
+        world: NewtonWorld,
+        sync_mode: str,
+        *,
+        snapshot: StateSnapshot | None = None,
+        viewer_thread: ViewerThread | None = None,
+        telemetry: TelemetryRegistry | None = None,
+        status_logger: StatusLogger | None = None,
+    ) -> None:
         super().__init__("newton_bridge")
         self.world = world
         self.sync_mode = sync_mode
-        self.viewer = viewer
+        self.snapshot = snapshot
+        self.viewer_thread = viewer_thread
         self.pack = world.pack
         self.shutdown_requested = False
         self.ready_log_info: str | None = None
@@ -55,10 +81,13 @@ class SimBridgeNode(Node):
         self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
         self._pub_interval: float = 1.0 / self._publish_rate_hz
 
-        # Render cadence is wall-clock, independent of physics step rate.
-        # viewer_hz=0/None means "render every time tick() is polled".
-        viewer_hz = sim_cfg.get("viewer_hz", 60)
-        self._render_ticker = RenderTicker(viewer_hz)
+        # Telemetry — created here if caller didn't pass one (eases tests).
+        self.telemetry = telemetry or TelemetryRegistry(
+            physics_dt=world.physics_dt,
+            sync_mode=(sync_mode == "sync"),
+            sync_timeout_s=float(ros_cfg.get("sync_timeout_ms", 100)) / 1000.0,
+        )
+        self.status_logger = status_logger or StatusLogger(period_s=0)
 
         # Watchdog used only in sync mode — armed lazily in run_sync().
         self._sync_timeout_s: float = float(ros_cfg.get("sync_timeout_ms", 100)) / 1000.0
@@ -67,12 +96,8 @@ class SimBridgeNode(Node):
         # /tf config (Phase 4). Default ON per product decision D.
         self._publish_tf_enabled: bool = bool(ros_cfg.get("publish_tf", True))
         self._tf_root_frame: str = str(ros_cfg.get("tf_root_frame", "world"))
-        # Empty list means "publish every body except the root frame itself".
         self._publish_frames: list[str] = list(ros_cfg.get("publish_frames", []) or [])
 
-        # latest command (mutable; callback writes, main loop reads).
-        # Any of positions/velocities/efforts may be None (= field was empty
-        # on the incoming JointState and should be left untouched).
         self._latest_cmd: dict = {
             "names": None,
             "positions": None,
@@ -90,10 +115,12 @@ class SimBridgeNode(Node):
         self.pub_state = self.create_publisher(
             JointState, ros_cfg["joint_states_topic"], qos
         )
+        self.pub_diagnostics = self.create_publisher(
+            DiagnosticArray, "/sim/diagnostics", qos
+        )
         self.sub_cmd = self.create_subscription(
             JointState, ros_cfg["joint_command_topic"], self._on_cmd, qos
         )
-        # Phase 6a: runtime gravity change via topic (Trigger can't carry vec).
         self.sub_gravity = self.create_subscription(
             Vector3, "/sim/set_gravity", self._on_set_gravity, qos
         )
@@ -103,7 +130,6 @@ class SimBridgeNode(Node):
             else None
         )
 
-        # Phase 5: sensors. Build after model is up; publishers are per-sensor.
         self.sensors: SensorBundle = build_sensors(self.pack, world.model)
         self._contact_pubs = {
             spec.label: self.create_publisher(WrenchStamped, spec.topic, qos)
@@ -119,11 +145,13 @@ class SimBridgeNode(Node):
                 f"{len(self.sensors.imu)} imu"
             )
 
-        # /sim/reset is always available — useful in both modes.
         self.srv_reset = self.create_service(Trigger, "/sim/reset", self._on_reset)
 
+        viewer_hz = sim_cfg.get("viewer_hz", 60)
         render_note = (
-            f"render @ {viewer_hz:.0f}Hz (wall)" if viewer_hz else "render every tick"
+            f"render @ {viewer_hz:.0f}Hz wall (viewer thread)"
+            if viewer_hz
+            else "render every tick (viewer thread)"
         )
         if self.sync_mode == "sync":
             self.get_logger().info(
@@ -139,6 +167,7 @@ class SimBridgeNode(Node):
             )
 
         self._last_pub_wall: float = 0.0
+        self._last_diag_wall: float = 0.0
 
     # -- topic callbacks ----------------------------------------------------
     def _on_set_gravity(self, msg: Vector3) -> None:
@@ -146,34 +175,36 @@ class SimBridgeNode(Node):
         self.get_logger().info(f"gravity -> ({msg.x}, {msg.y}, {msg.z})")
 
     def _on_cmd(self, msg: JointState) -> None:
+        now = time.monotonic()
+        self.telemetry.note_cmd(now)
         self._latest_cmd["names"] = list(msg.name)
-        # Each field is only forwarded if the publisher populated it — empty
-        # arrays mean "do not drive this channel this tick". Length mismatches
-        # (other than empty) are passed through; set_joint_targets iterates
-        # with zip so extras are truncated.
         n = len(msg.name)
         self._latest_cmd["positions"] = list(msg.position) if len(msg.position) == n else None
         self._latest_cmd["velocities"] = list(msg.velocity) if len(msg.velocity) == n else None
         self._latest_cmd["efforts"] = list(msg.effort) if len(msg.effort) == n else None
 
         if self.sync_mode == "sync":
-            self._cmd_watchdog.note_command(time.monotonic())
+            self._cmd_watchdog.note_command(now)
             self._apply_latest_cmd()
-            self.world.step()
+            self._step_and_publish()
             self._log_ready_once()
-            self._publish_state(force=True)
-            self._render_if_due()
 
     # -- service callbacks --------------------------------------------------
     def _on_reset(self, request, response):
-        self.world.reset()
-        self._latest_cmd["names"] = None
-        self._latest_cmd["positions"] = None
-        self._publish_state(force=True)
-        self._render_if_due()
+        self._do_reset()
         response.success = True
         response.message = "reset to home_pose"
         return response
+
+    def _do_reset(self) -> None:
+        """Internal reset path; reused by ViewerThread reset queue."""
+        self.world.reset()
+        self._latest_cmd["names"] = None
+        self._latest_cmd["positions"] = None
+        self._latest_cmd["velocities"] = None
+        self._latest_cmd["efforts"] = None
+        self._publish_state(force=True)
+        self._publish_snapshot()
 
     def _log_ready_once(self) -> None:
         if self._ready_logged:
@@ -182,13 +213,26 @@ class SimBridgeNode(Node):
             self.get_logger().info(self.ready_log_info)
         self._ready_logged = True
 
-    def _render_if_due(self) -> None:
-        if self.viewer is None:
-            return
-        if self._render_ticker.tick():
-            self._render_viewer()
-
     # -- helpers ------------------------------------------------------------
+    def _step_and_publish(self) -> None:
+        """One physics step + the bookkeeping that goes with it."""
+        self.world.step()
+        self.telemetry.note_step(time.monotonic())
+        self._publish_state(force=(self.sync_mode == "sync"))
+        self._publish_snapshot()
+
+    def _publish_snapshot(self) -> None:
+        if self.snapshot is None:
+            return
+        now = time.monotonic()
+        telemetry_dict = self.telemetry.snapshot(now, self.world.sim_time).as_dict()
+        self.snapshot.publish(
+            self.world.state_0,
+            sim_time=self.world.sim_time,
+            telemetry=telemetry_dict,
+            now=now,
+        )
+
     def _apply_latest_cmd(self) -> None:
         names = self._latest_cmd["names"]
         if names is None:
@@ -202,7 +246,6 @@ class SimBridgeNode(Node):
                 velocities=self._latest_cmd["velocities"],
                 efforts=self._latest_cmd["efforts"],
             )
-        # Consume: clear so we don't re-apply stale commands next tick.
         self._latest_cmd["names"] = None
         self._latest_cmd["positions"] = None
         self._latest_cmd["velocities"] = None
@@ -231,10 +274,9 @@ class SimBridgeNode(Node):
         msg.name = self._joint_names
         msg.position = [float(q[n]) for n in self._joint_names]
         msg.velocity = [float(qd[n]) for n in self._joint_names]
-        # effort is the commanded control.joint_f readback; solver-applied
-        # torque is not exposed on State in Newton 1.1.0.
         msg.effort = [float(eff[n]) for n in self._joint_names]
         self.pub_state.publish(msg)
+        self.telemetry.note_pub(now_wall)
         self._publish_clock()
         self._publish_tf(now_stamp)
         self._publish_sensors(now_stamp)
@@ -243,8 +285,6 @@ class SimBridgeNode(Node):
         if self.pub_tf is None:
             return
         poses = self.world.read_body_transforms()
-        # Filter: default = every body except the root frame itself.
-        # If publish_frames is set, publish only those names (still minus root).
         if self._publish_frames:
             names = [n for n in self._publish_frames if n in poses]
         else:
@@ -286,7 +326,6 @@ class SimBridgeNode(Node):
             msg.wrench.force.x = fx
             msg.wrench.force.y = fy
             msg.wrench.force.z = fz
-            # torque stays zero — SensorContact.total_force is vec3, not wrench
             self._contact_pubs[spec.label].publish(msg)
 
         for spec in self.sensors.imu:
@@ -303,17 +342,55 @@ class SimBridgeNode(Node):
             msg.angular_velocity.x = gx
             msg.angular_velocity.y = gy
             msg.angular_velocity.z = gz
-            # orientation unknown -> -1 on [0] signals the field is unset
-            # (sensor_msgs/Imu convention)
             msg.orientation_covariance[0] = -1.0
             self._imu_pubs[spec.label].publish(msg)
 
-    def _render_viewer(self) -> None:
-        if self.viewer is None:
+    def _publish_diagnostics(self, now: float) -> None:
+        """1Hz /sim/diagnostics with the same fields as the status line."""
+        if now < self._last_diag_wall + 1.0:
             return
-        self.viewer.begin_frame(self.world.sim_time)
-        self.viewer.log_state(self.world.state_0)
-        self.viewer.end_frame()
+        self._last_diag_wall = now
+        snap = self.telemetry.snapshot(now, self.world.sim_time)
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        status = DiagnosticStatus()
+        status.name = "newton_bridge"
+        status.hardware_id = "newton"
+        if snap.state == STATE_STALL:
+            status.level = DiagnosticStatus.WARN
+        else:
+            status.level = DiagnosticStatus.OK
+        status.message = snap.state
+        for k, v in snap.as_dict().items():
+            kv = KeyValue()
+            kv.key = str(k)
+            kv.value = "" if v is None else f"{v}"
+            status.values.append(kv)
+        msg.status.append(status)
+        self.pub_diagnostics.publish(msg)
+
+    def _periodic_telemetry(self, now: float) -> None:
+        """Status line + /sim/diagnostics fanout, called once per main-loop tick."""
+        self.status_logger.maybe_log(now, self.telemetry, self.world.sim_time)
+        self._publish_diagnostics(now)
+
+    def _drain_viewer_signals(self) -> bool:
+        """Honor ESC/window-close + UI Reset from the viewer thread.
+
+        Returns True if a single-step pulse was consumed (caller may use this
+        in sync mode while paused). Window close flips shutdown_requested.
+        """
+        vt = self.viewer_thread
+        if vt is None:
+            return False
+        if vt.closed_externally():
+            self.get_logger().info("viewer window closed; shutting down")
+            self.shutdown_requested = True
+            return False
+        if vt.consume_reset_request():
+            self.get_logger().info("viewer Reset clicked; resetting world")
+            self._do_reset()
+        return vt.consume_step_request()
 
     def request_shutdown(self) -> None:
         self.shutdown_requested = True
@@ -322,20 +399,27 @@ class SimBridgeNode(Node):
     def run_freerun(self, rate_mode: str) -> None:
         realtime = rate_mode != "max"
         next_wall = time.monotonic()
+        # Seed the snapshot so the viewer thread has something to render
+        # before the first step lands.
+        self._publish_snapshot()
         while rclpy.ok() and not self.shutdown_requested:
-            if self.viewer is not None and not self.viewer.is_running():
-                self.get_logger().info("viewer window closed; shutting down")
+            step_pulse = self._drain_viewer_signals()
+            if self.shutdown_requested:
                 break
-            paused = self.viewer is not None and self.viewer.is_paused()
+            paused = self.viewer_thread is not None and self.viewer_thread.is_paused()
             rclpy.spin_once(self, timeout_sec=0.0)
             if self.shutdown_requested:
                 break
             if not paused:
                 self._apply_latest_cmd()
-                self.world.step()
+                self._step_and_publish()
                 self._log_ready_once()
-                self._publish_state(force=False)
-            self._render_if_due()
+            elif step_pulse:
+                # Paused + '.' single-step → advance exactly one frame.
+                self._apply_latest_cmd()
+                self._step_and_publish()
+                self._log_ready_once()
+            self._periodic_telemetry(time.monotonic())
             if realtime and not paused:
                 next_wall += self.world.physics_dt
                 sleep_for = next_wall - time.monotonic()
@@ -351,32 +435,31 @@ class SimBridgeNode(Node):
     def run_sync(self) -> None:
         """Externally driven loop: /joint_command triggers step via _on_cmd.
 
-        The main loop only spins ROS callbacks and runs the idle watchdog,
-        which republishes /joint_states (without stepping) when no command
-        has arrived for sync_timeout_ms. Viewer window close / pause is
-        honored here too so the process exits cleanly when the user closes
-        the viewer.
+        The main loop spins ROS callbacks and runs the idle watchdog (which
+        republishes /joint_states without stepping when no command has
+        arrived for sync_timeout_ms). Viewer signals (close / reset / SPACE
+        pause / `.` step) are also drained here.
         """
-        # Publish initial state so late subscribers get at least one sample.
+        # Publish initial state + snapshot so late subscribers and the viewer
+        # thread both see something immediately.
         self._publish_state(force=True)
-        self._render_if_due()
-        # Spin timeout chosen to divide the watchdog window ~5 ways so the
-        # republish jitter stays below ~20% of sync_timeout_ms. When a viewer
-        # is attached, also cap at half the render period so wall-clock render
-        # polling doesn't alias below viewer_hz.
+        self._publish_snapshot()
+        # Spin timeout: divide watchdog window ~5 ways for republish jitter
+        # control. With viewer in its own thread, we no longer cap by the
+        # render period (the viewer thread paces itself).
         spin_timeout = min(0.02, self._sync_timeout_s / 5.0)
-        if self.viewer is not None and not self._render_ticker.passthrough:
-            spin_timeout = min(spin_timeout, self._render_ticker.render_dt / 2.0)
         while rclpy.ok() and not self.shutdown_requested:
-            if self.viewer is not None and not self.viewer.is_running():
-                self.get_logger().info("viewer window closed; shutting down")
+            step_pulse = self._drain_viewer_signals()
+            if self.shutdown_requested:
                 break
+            paused = self.viewer_thread is not None and self.viewer_thread.is_paused()
             rclpy.spin_once(self, timeout_sec=spin_timeout)
             if self.shutdown_requested:
                 break
+            if paused and step_pulse:
+                # Paused + '.' single-step → advance one frame even without a cmd.
+                self._step_and_publish()
+                self._log_ready_once()
             if self._cmd_watchdog.is_stale(time.monotonic()):
-                # Stale: republish current state (no step) so downstream tools
-                # that polled for /joint_states keep seeing fresh timestamps.
                 self._publish_state(force=True)
-            # Keep viewer at viewer_hz wall-clock regardless of command rate.
-            self._render_if_due()
+            self._periodic_telemetry(time.monotonic())

@@ -48,6 +48,11 @@ services:
       - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
       - RERUN_WEB_PORT=${RERUN_WEB_PORT:-9090}
       - RERUN_GRPC_PORT=${RERUN_GRPC_PORT:-9876}
+      # -- Telemetry --------------------------------------------------------
+      # 1Hz stderr status line (sim_time | step Hz | cmd Hz | render Hz | state).
+      # 0 disables; STALL state auto-promotes to WARN level. /sim/diagnostics
+      # is always published at 1Hz and has no toggle.
+      - STATUS_LOG_HZ=${STATUS_LOG_HZ:-1.0}
       # -- Jupyter ----------------------------------------------------------
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-newton}
     deploy:

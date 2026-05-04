@@ -51,6 +51,14 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 | `RERUN_RECORD_TO` | (unset) | path | `.rrd` 녹화 경로. 설정 시 웹 뷰어와 동시 녹화 |
 | `ENABLE_VIEWER` | (deprecated) | — | 설정되면 에러. `VIEWER` 로 대체 |
 
+### Telemetry / 진단
+
+| 변수 | 기본 | 허용값 | 설명 |
+|---|---|---|---|
+| `STATUS_LOG_HZ` | `1.0` | float | 1Hz 기본 stderr 상태 라인 cadence. `0` 이면 비활성. STALL 상태일 때만 WARN 레벨로 자동 승격됩니다. |
+
+`/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`) 는 항상 1Hz 로 게시되며, 비활성화 환경 변수는 없습니다. 자세한 토픽 내용은 [§Telemetry & 진단](#telemetry--진단) 참조.
+
 ### GPU / X11
 
 | 변수 | 기본 | 설명 |
@@ -304,8 +312,10 @@ ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
 | sim step | 자율 | `/joint_command` publish 수신 시 |
 | `/clock` publish | publish 시점마다 | 매 step + watchdog idle republish |
 | `/joint_states` | `publish_rate_hz` | 매 step + `sync_timeout_ms` idle republish |
-| 뷰어 렌더 | `sim.viewer_hz` 로 제한 | `sim.viewer_hz` 로 제한 |
+| 뷰어 렌더 | `sim.viewer_hz` 로 제한, **viewer thread 가 독립적으로 pacing** | 동일 — sync 모드여도 viewer 는 viewer_hz 로 계속 그림 (idle 일 땐 마지막 snapshot 보여줌) |
 | 사용 케이스 | 관찰/로깅, loose-sync 제어 | RL rollout, deterministic 테스트 |
+
+> **Thread 분리 (2026-05 update)**: 물리/ROS 는 main thread, 렌더링은 별도 daemon thread (`viewer_thread.ViewerThread`). main 은 step 마다 `StateSnapshot.publish()` (이중 버퍼 GPU memcpy) 만 호출하고 즉시 다음 작업으로 넘어갑니다. 느린 viewer 가 step rate 를 떨어뜨리지 못하며, sync 모드에서 cmd 가 안 들어와도 viewer 는 viewer_hz 로 계속 마지막 frame 을 grab/render 합니다. 자세한 설계 노트는 [ARCHITECTURE.md](ARCHITECTURE.md) 참조.
 
 ---
 
@@ -337,6 +347,46 @@ ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
 | imu | `sensor_msgs/Imu` | `linear_acceleration`, `angular_velocity` 채움; `orientation_covariance[0]=-1` (orientation 미제공) |
 
 **주의**: `SensorIMU` 는 Newton의 **site** 개념이 필요하므로 MJCF 소스 pack 에서만 의미 있습니다. URDF pack 에 붙이려면 로더 레벨에서 `builder.add_site(...)` 를 수동으로 호출해야 합니다.
+
+---
+
+## Telemetry & 진단
+
+Viewer 가 별도 thread 에서 도는 환경에서 "viewer 가 그려지고 있다 ≠ physics 가 살아 있다" 입니다. 그래서 모든 채널의 rate / 상태를 명시적으로 노출합니다. 구현은 [src/newton_bridge/telemetry.py](../src/newton_bridge/telemetry.py).
+
+### 메트릭
+
+| 메트릭 | 의미 |
+|---|---|
+| `step_hz` | physics step rate (1초 슬라이딩 윈도) |
+| `rt_factor` | `step_hz × physics_dt` — 1.0 이면 realtime, <1 이면 sim 이 wall-clock 보다 느림 |
+| `cmd_hz` | `/joint_command` 수신 rate |
+| `pub_hz` | `/joint_states` publish rate |
+| `render_hz` | viewer thread 가 실제로 그린 frame rate |
+| `time_since_cmd` | 마지막 `/joint_command` 후 경과 (sec) |
+| `time_since_step` | 마지막 step 후 경과 (sec) |
+| `state` | `INIT` / `RUNNING` / `IDLE` / `STALL` |
+
+### state 분류
+
+| state | 조건 |
+|---|---|
+| `INIT` | step 이 한 번도 없음 |
+| `IDLE` | sync 모드 + `time_since_cmd > sync_timeout_s` + `cmd_hz==0`. 정상 대기 |
+| `STALL` | `time_since_step > max(0.5s, 50 × physics_dt)` 또는 sync 모드에서 cmd_hz>0 인데 step_hz==0 이 1초 넘게 지속. 비정상 |
+| `RUNNING` | 그 외 |
+
+### 출력 채널 (모두 기본 ON)
+
+1. **Terminal** (1Hz stderr) — `STATUS_LOG_HZ` 로 cadence 조절. STALL 일 때 자동으로 WARN 레벨로 emit:
+   ```
+   [newton_bridge] sim 12.34s | step 240Hz (rt 1.00) | cmd 100Hz | pub 100Hz | render 60Hz | state=RUNNING
+   ```
+2. **Viewer overlay** — GL: `register_ui_callback(position="stats")` 로 통계 패널, Rerun: `rr.log("/stats/<metric>", rr.Scalar(...))` 로 시계열 차트 (PR#3 이후 wiring 예정).
+3. **ROS topic** `/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`, 1Hz) — 위 메트릭 전부를 `KeyValue` 로. STALL 시 `level=WARN`. 확인:
+   ```bash
+   ros2 topic echo /sim/diagnostics
+   ```
 
 ---
 
@@ -388,8 +438,18 @@ VIEWER=gl VIEWER_WIDTH=1920 VIEWER_HEIGHT=1080 ./scripts/host/run.sh sim
 
 prereq: 호스트 X 서버 (Wayland 도 XWayland 로 OK), `DISPLAY` 세팅, nvidia GL + `NVIDIA_DRIVER_CAPABILITIES=...graphics,display`. `run.sh` 가 `xhost +local:docker` 자동 실행.
 
-- **창을 닫으면 sim 이 종료됩니다** ([node.py](../src/newton_bridge/node.py) 의 `viewer.is_running()` 체크).
-- **일시정지**: 창에서 `Space`. sim step 은 멈추지만 rclpy spin 은 계속 → `/joint_command` 는 받아서 pending. 재개 시 반영.
+- **창을 닫으면 sim 이 종료됩니다** (viewer thread 가 `closed_event` 를 set, main 이 읽고 shutdown 진행).
+- **GL 뷰어 입력**
+
+  | 입력 | 효과 |
+  |---|---|
+  | `Space` | 일시정지/재개. sim step 은 멈추지만 rclpy spin 은 계속 → `/joint_command` 는 받아서 pending. 재개 시 반영 |
+  | `.` (period) | 일시정지 상태에서 한 frame 만 single-step. queue maxsize=1 이므로 빠르게 여러 번 눌러도 정확히 1 step 씩 처리 |
+  | `Esc` / 창 닫기 | sim 종료 |
+  | UI Reset 버튼 | `/sim/reset` 서비스 호출과 동일한 경로 (queue 로 신호 → main 이 reset 수행). viewer 가 직접 `world.reset()` 을 부르지 않음 |
+  | WASD / 마우스 | 카메라 이동 / 회전 (Newton ViewerGL 내부 처리) |
+  | 우클릭 | body picking (Newton ViewerGL 내부 처리) |
+
 - 실패 모드: X socket 접근 불가 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참조.
 
 ### `usd` / `file` — 녹화
@@ -417,14 +477,16 @@ VIEWER=none ./scripts/host/run.sh sim                     # 완전 비활성 (CI
 
 ### Sync 모드에서의 viewer
 
-sync 모드에서는 sim 자체가 외부 구동이므로 **프레임은 `/joint_command` 가 들어와서 step 이 실제로 일어날 때만 갱신**됩니다 (또는 `/sim/reset`). `__main__.py` 가 다음 경고를 띄웁니다:
+sync 모드에서는 sim step 자체가 외부 구동이므로 **state 는 `/joint_command` 또는 `/sim/reset` 시점에만 변합니다**. 다만 viewer 는 별도 thread 에서 viewer_hz 로 계속 마지막 snapshot 을 다시 그리므로 창 자체가 "얼어붙어" 보이지 않습니다 — 카메라 회전, GL UI 버튼, Rerun timeline 모두 동작.
+
+`__main__.py` 가 다음 안내를 띄웁니다 (rerun/gl 한정):
 
 ```
 [newton_bridge] note: sync mode advances only on /joint_command or /sim/reset;
                      the viewer will appear frozen until a controller publishes commands.
 ```
 
-렌더 rate 은 `sim.viewer_hz` (기본 60Hz) 로 wall-clock 기준 — physics rate / 커맨드 rate 와 무관. 연속 프레임을 보고 싶으면 `controller_demo.py --mode sync` 로 루프 publish.
+연속 프레임을 보고 싶으면 `controller_demo.py --mode sync` 로 루프 publish.
 
 ### 녹화 파일 cleanup
 
