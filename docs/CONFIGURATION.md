@@ -1,6 +1,6 @@
 # Configuration Reference
 
-env var + robot.yaml / scene.yaml 모든 knob 을 한 곳에. 토픽/서비스 스키마는 [TOPICS.md](TOPICS.md), 새 pack 추가 절차는 [ROBOTS.md](ROBOTS.md).
+env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 · viewer 모드를 한 곳에. 새 pack 추가 절차는 [ROBOTS.md](ROBOTS.md), 일상 워크플로우는 [USAGE.md](USAGE.md).
 
 ---
 
@@ -14,6 +14,7 @@ env var + robot.yaml / scene.yaml 모든 knob 을 한 곳에. 토픽/서비스 �
 |---|---|---|---|
 | `ROBOT` | `ur5e` | `run.sh` | 컨테이너 경로 `/workspace/robots/$ROBOT` 로 확장 |
 | `ROBOT_PACK` | `/workspace/robots/ur5e` | `__main__.py` | 컨테이너 내 pack 경로 (직접 지정하면 `ROBOT` 무시) |
+| `EXTERNAL_PACK_HOST` | (unset) | `run.sh` | 호스트의 외부 robot_description 폴더 절대경로. 설정되면 `/workspace/external_pack` 으로 ro 마운트되고 `ROBOT_PACK` 도 자동으로 거기를 가리킴. URDF only — 자세한 절차는 [ROBOTS.md §Path D](ROBOTS.md#path-d-호스트의-외부-폴더-사용-urdf-only) |
 
 ### Sync + pacing
 
@@ -37,7 +38,7 @@ env var + robot.yaml / scene.yaml 모든 knob 을 한 곳에. 토픽/서비스 �
 
 | 변수 | 기본 | 허용값 | 설명 |
 |---|---|---|---|
-| `VIEWER` | `rerun` | `rerun` \| `gl` \| `usd` \| `file` \| `null` \| `none` | [VIEWER.md](VIEWER.md) 참조 |
+| `VIEWER` | `rerun` | `rerun` \| `gl` \| `usd` \| `file` \| `null` \| `none` | [§Viewer](#viewer-모드) 참조 |
 | `VIEWER_WIDTH` | `1280` | int | `gl` 창 너비 |
 | `VIEWER_HEIGHT` | `720` | int | `gl` 창 높이 |
 | `VIEWER_FPS` | `60` | int | `usd` 녹화 frame rate |
@@ -48,7 +49,7 @@ env var + robot.yaml / scene.yaml 모든 knob 을 한 곳에. 토픽/서비스 �
 | `RERUN_WEB_PORT` | `9090` | int | Rerun 웹 뷰어 포트 (호스트 `:9090`) |
 | `RERUN_GRPC_PORT` | `9876` | int | Rerun gRPC 포트 |
 | `RERUN_RECORD_TO` | (unset) | path | `.rrd` 녹화 경로. 설정 시 웹 뷰어와 동시 녹화 |
-| `ENABLE_VIEWER` | (deprecated) | — | 설정되면 에러. Phase 7 에서 `VIEWER` 로 대체 |
+| `ENABLE_VIEWER` | (deprecated) | — | 설정되면 에러. `VIEWER` 로 대체 |
 
 ### GPU / X11
 
@@ -78,8 +79,8 @@ env var + robot.yaml / scene.yaml 모든 knob 을 한 곳에. 토픽/서비스 �
 
 ## Pack YAML 스키마
 
-`robots/<name>/` 에 다음 중 하나:
-- `scene.yaml` — canonical (Phase 2+)
+`robots/<name>/` (또는 `EXTERNAL_PACK_HOST` 의 호스트 폴더) 에 다음 중 하나:
+- `scene.yaml` — canonical (멀티-articulation 지원)
 - `robot.yaml` — legacy, loader 가 scene 으로 자동 승격
 
 로더 동작은 [src/newton_bridge/robot_pack.py](../src/newton_bridge/robot_pack.py) 참조. 승격 시 `robot.yaml` 의 필드는 한 world 한 articulation (`label=<pack_dir_name>`) 의 scene 으로 1:1 변환됩니다.
@@ -135,7 +136,7 @@ worlds:
             limit_ke: 10000.0        # joint limit penalty Kp
             limit_kd: 100.0          # joint limit penalty Kd
 
-sensors:                             # optional (Phase 5)
+sensors:                             # optional
   contact:
     - label: ee
       bodies: ["*wrist_3_link*"]     # fnmatch, body_label 매칭
@@ -156,7 +157,7 @@ ros:
   sync_timeout_ms:     100           # sync 모드 전용. /joint_command 가 이 시간 동안
                                      # 안 오면 현재 상태를 /joint_states 로 재퍼블리시
                                      # (step 없음). 구독자가 굶지 않게 하기 위함
-  publish_tf:          true          # Phase 4. default true
+  publish_tf:          true          # default true
   tf_root_frame:       world         # /tf 트리 루트 프레임
   publish_frames:      []            # [] = 전체 (root 제외), 또는 whitelist
 ```
@@ -222,13 +223,11 @@ ros:
 | MJCF (no `<actuator>`) | `xpbd` / `featherstone` | `drive.stiffness/damping` 이 사용됨 |
 
 실제 pack 들:
-- `ur5e` — xacro → URDF + `mujoco`. `$(find ur_description)` 은 apt `ros-jazzy-ur-description` 이 제공. `package://` 메쉬는 `resolve-robotics-uri-py` 가 `AMENT_PREFIX_PATH` 로 해석 (실험 결과 XPBD 불일치)
+- `ur5e` — xacro → URDF + `mujoco`. `$(find ur_description)` 은 apt `ros-jazzy-ur-description` 이 제공
 - `franka` — MJCF + `mujoco` (`panda.xml` 에 actuator 포함)
 - `kuka_iiwa_14` — MJCF + `mujoco`
 
 불일치는 `./scripts/host/run.sh verify` 섹션 6 에서 잡힘.
-
-**Deformable solver** (`style3d` / `vbd`) 는 [DEFERRED_WORK.md Phase 6b](DEFERRED_WORK.md) 에서 다루는 미구현 범위 — 현재 pack 스키마로는 cloth/soft/particle 을 선언할 수 없습니다.
 
 ---
 
@@ -243,6 +242,70 @@ ros:
 | `none` | — | 비구동 joint (센서 용) |
 
 Per-joint `joints.<name>.drive.mode` 로 섞을 수 있음. 메시지에 세 필드 다 실어도 안전 — joint 의 mode 가 그 중 하나만 수용.
+
+---
+
+## ROS Topics & Services
+
+모든 토픽은 표준 msg 타입만 사용 (커스텀 msg 패키지 없음).
+
+### Topics
+
+| Direction | Topic | Type | Rate | QoS | Note |
+|---|---|---|---|---|---|
+| pub | `/clock` | `rosgraph_msgs/Clock` | physics_hz 또는 publish 시점 | Reliable, depth=10 | 외부 노드는 `use_sim_time: true` 로 구독 |
+| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (sync) + `sync_timeout_ms` idle republish | Reliable, depth=10 | `name` 순서는 pack 의 `joint_names`. position/velocity/effort 3필드 모두 채움 |
+| pub | `/tf` | `tf2_msgs/TFMessage` | `/joint_states` 와 동일 시점 | Reliable, depth=10 | `ros.publish_tf` (default `true`) 로 on/off. 각 body 를 `tf_root_frame` 의 child 로 퍼블리시 |
+| sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position/velocity/effort 필드 각각 드라이브 채널로 매핑 (위 §Drive Mode) |
+| sub | `/sim/set_gravity` | `geometry_msgs/Vector3` | latest-wins | Reliable, depth=10 | 런타임 gravity 변경. 단위 m/s² |
+
+### Services
+
+| Service | Type | Semantics |
+|---|---|---|
+| `/sim/reset` | `std_srvs/Trigger` | restore `home_pose`, zero velocities, publish state. 두 모드 모두 available |
+
+`/sim/step` 은 제거되었습니다 — sync 모드에서 step 트리거 역할을 `/joint_command` publish 가 대신합니다.
+
+### Joint conventions
+
+- **단위**: position = radian (revolute), velocity = rad/s, effort = N·m.
+- **이름**: pack 의 `joint_names` 가 authoritative. 컨트롤러가 일부만 보내도 sim 은 매칭되는 것만 반영하고 나머지는 마지막 target 유지.
+- **효과 시점**: freerun 에서는 다음 `world.step()` 직전에 반영. sync 에서는 `/joint_command` 수신 콜백이 직접 1 step 을 실행 (publish = step trigger).
+- **빈 배열의 의미**: `position` / `velocity` / `effort` 중 비어 있는 배열 = "이 채널 건드리지 않음". 길이가 `name` 과 일치해야 반영.
+
+### `/joint_command` 예시
+
+```bash
+# position 한 joint
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: ['shoulder_pan_joint'], position: [0.5]}"
+
+# velocity 한 joint (pack 이 velocity 모드일 때)
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: ['shoulder_pan_joint'], velocity: [0.2]}"
+
+# effort (torque) 한 joint
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: ['shoulder_pan_joint'], effort: [5.0]}"
+
+# sync 모드에서 빈 publish = "현재 target 그대로 1 step 진행"
+ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
+  "{name: [], position: [], velocity: [], effort: []}"
+
+# home 복귀 (freerun / sync 공통)
+ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
+```
+
+### Sync mode 요약
+
+| | freerun | sync |
+|---|---|---|
+| sim step | 자율 | `/joint_command` publish 수신 시 |
+| `/clock` publish | publish 시점마다 | 매 step + watchdog idle republish |
+| `/joint_states` | `publish_rate_hz` | 매 step + `sync_timeout_ms` idle republish |
+| 뷰어 렌더 | `sim.viewer_hz` 로 제한 | `sim.viewer_hz` 로 제한 |
+| 사용 케이스 | 관찰/로깅, loose-sync 제어 | RL rollout, deterministic 테스트 |
 
 ---
 
@@ -268,7 +331,12 @@ Per-joint `joints.<name>.drive.mode` 로 섞을 수 있음. 메시지에 세 필
 | `topic` | str | `/imu/<label>` 기본 |
 | `frame_id` | str | `world` 기본 |
 
-출력 msg 타입은 [TOPICS.md §Sensors](TOPICS.md#sensors-phase-5) 참조.
+| 센서 | 토픽 타입 | 내용 |
+|---|---|---|
+| contact | `geometry_msgs/WrenchStamped` | `force` = `SensorContact.total_force` 합산; `torque` 는 0 (Newton 1.1.0 은 vec3 만 제공) |
+| imu | `sensor_msgs/Imu` | `linear_acceleration`, `angular_velocity` 채움; `orientation_covariance[0]=-1` (orientation 미제공) |
+
+**주의**: `SensorIMU` 는 Newton의 **site** 개념이 필요하므로 MJCF 소스 pack 에서만 의미 있습니다. URDF pack 에 붙이려면 로더 레벨에서 `builder.add_site(...)` 를 수동으로 호출해야 합니다.
 
 ---
 
@@ -284,10 +352,94 @@ Newton 은 world-frame pose 만 제공하므로 현재 구현은 평탄한 `worl
 
 ---
 
+## Viewer 모드
+
+`VIEWER` env var 하나로 디스패치. 디스패치 코드는 [src/newton_bridge/viewer.py](../src/newton_bridge/viewer.py).
+
+| `VIEWER=` | 출력 | X11 | GL 드라이버 | 비용 | 용도 |
+|---|---|---|---|---|---|
+| `rerun` (기본) | 웹 UI @ `http://localhost:9090` | 불필요 | 불필요 | 중 | 원격/Dev-container, 스크러빙 |
+| `gl` | 호스트 X 창 | 필요 | 필요 | 높음 | 로컬 워크스테이션, 인터랙션 (카메라 drag) |
+| `usd` | `workspace/runs/sim_<ts>.usd` | 불필요 | 불필요 | 저 (녹화) | Omniverse 로 옮겨서 분석 |
+| `file` | `workspace/runs/sim_<ts>.nvpr` | 불필요 | 불필요 | 저 (녹화) | Newton 자체 replay |
+| `null` | 무출력 (팩토리만 dispatch) | 불필요 | 불필요 | ~0 | 벤치마크 (pure sim cost 측정) |
+| `none` | viewer 완전 비활성 | 불필요 | 불필요 | 0 | 프로덕션, CI |
+
+`none` 과 `null` 의 차이: `null` 은 매 frame `ViewerNull.log_state()` 가 호출됨 (작은 overhead). `none` 은 viewer 객체 자체를 만들지 않음.
+
+### `rerun` (기본) — 웹 UI
+
+```bash
+./scripts/host/run.sh sim       # 브라우저: http://localhost:9090
+```
+
+- `network_mode: host` 덕에 포트 매핑 불필요
+- 원격 머신이면 SSH tunnel: `ssh -L 9090:localhost:9090 user@remote`
+- `VIEWER_WIDTH` / `VIEWER_HEIGHT` 는 무시 (웹은 클라이언트가 뷰포트 소유)
+- 동시 녹화: `RERUN_RECORD_TO=/workspace/workspace/runs/session.rrd ./scripts/host/run.sh sim` → 호스트에서 `rerun workspace/runs/session.rrd` 로 재생
+- 포트 충돌: `RERUN_WEB_PORT=9091 RERUN_GRPC_PORT=9877 ./scripts/host/run.sh sim`
+
+### `gl` — 네이티브 X11 창
+
+```bash
+VIEWER=gl ./scripts/host/run.sh sim
+VIEWER=gl VIEWER_WIDTH=1920 VIEWER_HEIGHT=1080 ./scripts/host/run.sh sim
+```
+
+prereq: 호스트 X 서버 (Wayland 도 XWayland 로 OK), `DISPLAY` 세팅, nvidia GL + `NVIDIA_DRIVER_CAPABILITIES=...graphics,display`. `run.sh` 가 `xhost +local:docker` 자동 실행.
+
+- **창을 닫으면 sim 이 종료됩니다** ([node.py](../src/newton_bridge/node.py) 의 `viewer.is_running()` 체크).
+- **일시정지**: 창에서 `Space`. sim step 은 멈추지만 rclpy spin 은 계속 → `/joint_command` 는 받아서 pending. 재개 시 반영.
+- 실패 모드: X socket 접근 불가 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참조.
+
+### `usd` / `file` — 녹화
+
+```bash
+VIEWER=usd ./scripts/host/run.sh sim    # workspace/runs/sim_<UTC>.usd
+VIEWER=file ./scripts/host/run.sh sim   # workspace/runs/sim_<UTC>.nvpr (Newton 네이티브)
+```
+
+| 변수 | 기본 | 설명 |
+|---|---|---|
+| `VIEWER_OUTPUT_PATH` | `workspace/runs/sim_<ts>.<ext>` | 고정 경로로 저장 |
+| `VIEWER_OUTPUT_DIR` | `/workspace/workspace/runs` | 타임스탬프 파일 부모 |
+| `VIEWER_FPS` | `60` | 녹화 frame rate (`usd` only) |
+| `VIEWER_UP_AXIS` | `Z` | USD up axis (`usd` only) |
+
+USD 는 Omniverse / Isaac Sim / USD Composer 호환. `.nvpr` 은 `./scripts/host/run.sh example player --viewer gl --file <path>` 로 재생.
+
+### `null` / `none` — 헤드리스
+
+```bash
+VIEWER=null FREERUN_RATE=max ./scripts/host/run.sh sim    # 벤치마크
+VIEWER=none ./scripts/host/run.sh sim                     # 완전 비활성 (CI)
+```
+
+### Sync 모드에서의 viewer
+
+sync 모드에서는 sim 자체가 외부 구동이므로 **프레임은 `/joint_command` 가 들어와서 step 이 실제로 일어날 때만 갱신**됩니다 (또는 `/sim/reset`). `__main__.py` 가 다음 경고를 띄웁니다:
+
+```
+[newton_bridge] note: sync mode advances only on /joint_command or /sim/reset;
+                     the viewer will appear frozen until a controller publishes commands.
+```
+
+렌더 rate 은 `sim.viewer_hz` (기본 60Hz) 로 wall-clock 기준 — physics rate / 커맨드 rate 와 무관. 연속 프레임을 보고 싶으면 `controller_demo.py --mode sync` 로 루프 publish.
+
+### 녹화 파일 cleanup
+
+`workspace/runs/` 은 `.gitignore` 에 걸려 있어도 디스크에는 쌓임:
+
+```bash
+ls -lh workspace/runs/
+rm workspace/runs/sim_2025*.usd
+```
+
+---
+
 ## 참고
 
 - [INSTALL.md](INSTALL.md) — `.env` 복사 위치
 - [USAGE.md](USAGE.md) — env var 의 실전 조합
 - [ROBOTS.md](ROBOTS.md) — 새 pack 추가 시 schema 예제
-- [TOPICS.md](TOPICS.md) — ROS 토픽/서비스 전체
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 왜 이런 스키마인지
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 왜 이런 스키마인지 (컨트리뷰터용)

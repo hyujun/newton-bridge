@@ -1,3 +1,5 @@
+name: newton-bridge
+
 services:
   newton-bridge:
     build:
@@ -63,6 +65,12 @@ services:
       - ../robots:/workspace/robots:ro
       - ../scripts/container:/workspace/scripts:ro
       - ../workspace:/workspace/workspace:rw
+      # Optional: a host robot_description folder mounted as an external pack.
+      # `EXTERNAL_PACK_HOST` defaults to ../robots so the mount is a harmless
+      # no-op when unset; scripts/host/run.sh sets it to the user's path and
+      # also flips ROBOT_PACK to /workspace/external_pack. URDF only — xacro
+      # is not supported on this path (see docs/ROBOTS.md).
+      - ${EXTERNAL_PACK_HOST:-../robots}:/workspace/external_pack:ro
       # pip cache survives rebuilds
       - newton-pip-cache:/home/user/.cache/pip
     working_dir: /workspace

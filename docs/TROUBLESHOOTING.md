@@ -410,7 +410,7 @@ SYNC_MODE=freerun VIEWER=gl ./scripts/host/run.sh sim
 |---|---|---|
 | `joints in robot.yaml not found in Newton model: [...]` | URDF/MJCF 실제 joint 와 이름 불일치 | `verify.sh §6` 출력의 "actual" 리스트로 교체 |
 | `pack.primary_articulation=... not among world articulations` | `scene.yaml` 의 `ros.primary_articulation` 이 오타 | articulation label 과 일치시킴 |
-| `multi-world scenes are not yet supported` | `worlds:` 에 2개 이상 | Phase 2b 구현 전까지 단일 world 로 축소. [DEFERRED_WORK.md](DEFERRED_WORK.md) |
+| `multi-world scenes are not yet supported` | `worlds:` 에 2개 이상 | 현재 단일 world 만 지원 — articulation 을 하나의 world 로 합칠 것 |
 | `multi-articulation worlds are not yet supported` | 한 world 에 articulation 2개 이상 | 위와 동일 |
 | mesh 로드 실패 / SDF not found | URDF 에 `package://...` 잔존 | sed 로 상대경로 치환 ([ROBOTS.md §A.3](ROBOTS.md)) |
 | `/joint_states` 는 뜨는데 로봇이 꿈틀대기만 (MJCF) | `solver: mujoco` 인데 MJCF 에 `<actuator>` 없음 | `solver: xpbd` + `drive.stiffness/damping` 설정 |
@@ -490,4 +490,3 @@ timeout 30 ./scripts/host/run.sh sim > sim.log 2>&1 || true
 
 - [ARCHITECTURE.md §알려진 이슈](ARCHITECTURE.md#알려진-이슈) — Newton API 안정성, joint 이름 매핑
 - [ROBOTS.md #자주 만나는 실패 모드](ROBOTS.md#자주-만나는-실패-모드) — pack 작성 단계별
-- [DEFERRED_WORK.md](DEFERRED_WORK.md) — 의도적 미구현 경로

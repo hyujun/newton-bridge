@@ -2,7 +2,7 @@
 
 새 로봇을 `robots/<name>/` pack 으로 추가하거나, 외부 `*_description` ROS 2 패키지의 URDF/xacro/MJCF 를 끌어와서 붙이는 절차를 다룹니다. `newton_bridge` 는 로봇을 모른 채 pack 만 읽으므로, **pack 을 하나 더 만들면 = 새 로봇 지원** 입니다.
 
-개념 요약은 [ARCHITECTURE.md §Robot pack 계약](ARCHITECTURE.md#robot-pack-계약), 토픽 계약은 [TOPICS.md](TOPICS.md) 참조.
+개념 요약은 [ARCHITECTURE.md §Robot pack 계약](ARCHITECTURE.md#robot-pack-계약), 토픽 계약은 [CONFIGURATION.md §ROS Topics & Services](CONFIGURATION.md#ros-topics--services) 참조.
 
 ## Pack 의 해부
 
@@ -318,6 +318,108 @@ grep -oP '<joint[^>]*name="\K[^"]+' robots/yourmjcf/models/yourmjcf.xml
 
 - MJCF 에는 `<joint type="free">` 가 섞이는 경우가 있음. base link 의 free joint 는 `floating=False` 로 parse 하면 `joint_names` 에 안 들어가지만, 일부 씬에서는 강제로 노출될 수 있으니 `scripts/container/verify.sh` 로 확인.
 - Gripper finger 는 의도적으로 제외하거나, 쓰고 싶다면 추가 — [franka pack 주석](../robots/franka/robot.yaml) 참고.
+
+---
+
+## Path D: 호스트의 외부 폴더 사용 (URDF only)
+
+repo 의 `robots/` 를 건드리지 않고, 호스트 임의 위치에 있는 robot_description 폴더를 그대로 컨테이너에 마운트해서 사용하는 경로. `robots/` 는 빌트인 예시(ur5e, franka, kuka_iiwa_14)용이고, 실제 프로젝트 로봇은 호스트의 자기 위치에 두는 것을 권장합니다.
+
+**제약 (현재 범위)**:
+- **URDF만** 지원. xacro 는 ROS package resolution(`$(find ...)`) 과 self-contained 가드 때문에 이 경로에서는 불가 — 호스트에서 미리 URDF 로 변환해 두고 그 결과 폴더를 사용. 변환 방법은 위 §Path A의 (c) 참조.
+- 폴더 내부는 self-contained 여야 함: URDF 의 mesh 참조가 `package://` 또는 `/opt/ros/...` 절대경로면 동작 안 함. 상대경로(`<mesh filename="meshes/...">`) 또는 `file://` 절대경로로 정리.
+
+### 1) 호스트 폴더 구조
+
+원하는 위치 (예: `~/robot_description`) 에 다음 구조를 둡니다:
+
+```
+~/robot_description/
+├── robot.yaml              ← pack 메타데이터 (필수)
+└── models/
+    ├── my_robot.urdf
+    └── meshes/
+        └── ...
+```
+
+`robot.yaml` 의 `source_rel` 은 이 폴더 기준 상대경로 — `models/my_robot.urdf`.
+
+### 2) `robot.yaml` 작성
+
+위 §최소 `robot.yaml` 스켈레톤 그대로 사용. 핵심 필드:
+
+```yaml
+robot:
+  source: urdf
+  source_rel: models/my_robot.urdf   # 폴더 기준 상대경로
+  base_position: [0.0, 0.0, 0.0]
+sim:
+  physics_hz: 400
+  substeps: 1
+  solver: mujoco
+  ground_plane: true
+joint_names:
+  - joint_1
+  - joint_2
+  # ... (URDF 의 revolute/continuous/prismatic joint 만)
+home_pose:
+  joint_1: 0.0
+  joint_2: -1.5708
+drive:
+  mode: position
+  stiffness: 10000.0
+  damping: 100.0
+ros:
+  joint_states_topic:  /joint_states
+  joint_command_topic: /joint_command
+  publish_rate_hz:     100
+```
+
+### 3) mesh 경로 정리 (필요 시)
+
+URDF 가 `package://my_robot_description/...` 같은 ROS package URI 를 쓰면 컨테이너에서 해석 안 됨. sed 한 번:
+
+```bash
+cd ~/robot_description
+sed -i 's|package://my_robot_description/meshes|meshes|g' models/my_robot.urdf
+# 또는 절대경로면 file:// 형식 + 호스트 절대경로
+```
+
+mesh 파일이 URDF 와 같은 폴더 트리 안에 있고 상대경로면 추가 작업 불필요.
+
+### 4) 실행
+
+```bash
+EXTERNAL_PACK_HOST=$HOME/robot_description ./scripts/host/run.sh sim
+```
+
+`run.sh` 가:
+1. `EXTERNAL_PACK_HOST` 가 디렉토리이고 `robot.yaml` 을 포함하는지 검증 (실패 시 즉시 exit 2)
+2. 절대경로로 정규화 후 `docker compose` 에 `EXTERNAL_PACK_HOST` 환경변수로 전달
+3. `compose.yml` 이 그 호스트 경로를 `/workspace/external_pack` 으로 ro 마운트
+4. `ROBOT_PACK=/workspace/external_pack` 자동 세팅 → `python -m newton_bridge` 가 그쪽을 로드
+
+`ROBOT=` 은 무시됩니다. `EXTERNAL_PACK_HOST` 가 우선.
+
+### 5) 검증
+
+```bash
+# 호스트
+source /opt/ros/jazzy/setup.bash
+ros2 topic list                        # /clock /joint_states 등
+ros2 topic echo --once /joint_states   # name 이 robot.yaml 의 joint_names 와 일치
+```
+
+### 한계 / 설계 노트
+
+- pack 디렉토리는 컨테이너에서 ro 라서 `fetch_assets.sh` 같은 쓰기 작업은 못 함. 에셋 정리는 호스트에서 끝내고 들어와야 함.
+- xacro 가 필요하면 호스트에서 변환:
+  ```bash
+  source /opt/ros/jazzy/setup.bash
+  ros2 run xacro xacro my_robot.urdf.xacro > ~/robot_description/models/my_robot.urdf
+  # 그 다음 위 §3 의 sed 로 package:// 정리
+  ```
+- 호스트 폴더의 `robot.yaml` 은 git 저장소면 commit 가능 — 이 repo 의 `robots/` 와 무관. 실제 프로젝트 robot_description 패키지에 `robot.yaml` 한 파일만 추가하는 패턴 권장.
 
 ---
 

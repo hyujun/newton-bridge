@@ -28,12 +28,16 @@
 ```bash
 ./scripts/host/install.sh             # 호스트 prereq (base utils + docker + compose v2 + nvidia toolkit + ur_description + xacro)
 ./scripts/host/install.sh --with-ros  # + 전체 ROS 2 Jazzy Desktop (verify_ros.sh / controller_demo 용)
-./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드
+./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드 (예시 pack 채우기)
 ./scripts/host/build.sh               # Docker 이미지 빌드 (5~15분)
 ./scripts/host/run.sh verify          # 컨테이너 스모크 테스트
 ./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, VIEWER=rerun → http://localhost:9090
 VIEWER=gl ./scripts/host/run.sh sim   # Newton GL viewer 창 (X11 필요)
 VIEWER=none ./scripts/host/run.sh sim # headless
+
+# 호스트의 외부 robot_description 폴더 직접 사용 (URDF only):
+EXTERNAL_PACK_HOST=$HOME/my_robot_description ./scripts/host/run.sh sim
+# 폴더 내부에 robot.yaml + URDF 가 필요. 절차는 docs/ROBOTS.md (Path D).
 ```
 
 > 모든 `scripts/host/*.sh` 는 **재실행 안전 (idempotent)** — 이미 완료된 단계는 스킵합니다.
@@ -65,13 +69,13 @@ python3 examples/controller_demo.py --mode freerun --robot ur5e
 
 | Pack | DoF | Source | Solver (기본) |
 |---|---|---|---|
-| `ur5e` | 6 | URDF (ur_description) | xpbd |
+| `ur5e` | 6 | URDF (ur_description) | mujoco |
 | `franka` | 7 | MJCF (mujoco_menagerie/franka_emika_panda) | mujoco |
 | `kuka_iiwa_14` | 7 | MJCF (mujoco_menagerie/kuka_iiwa_14) | mujoco |
 
-전환은 env var 하나: `ROBOT=kuka_iiwa_14 ./scripts/host/run.sh sim`.
+위 표의 pack 들은 **빌트인 예시** — 실제 프로젝트 로봇은 호스트의 robot_description 폴더에 `robot.yaml` 만 추가해서 `EXTERNAL_PACK_HOST` 로 직접 마운트하는 것을 권장합니다 (URDF only). 빌트인 pack 을 다른 걸로 전환하려면 `ROBOT=kuka_iiwa_14 ./scripts/host/run.sh sim`.
 
-새 로봇 추가 또는 외부 `*_description` 패키지(URDF / xacro / MJCF) 연동은 [docs/ROBOTS.md](docs/ROBOTS.md) 참고.
+새 로봇 추가 (외부 폴더 / URDF / xacro / MJCF) 절차는 [docs/ROBOTS.md](docs/ROBOTS.md).
 
 ## Sync modes
 
@@ -117,7 +121,7 @@ newton-bridge/
 │       └── rl_smoketest.py        torch-cu12 검증
 ├── examples/
 │   └── controller_demo.py         sine-wave E2E 데모
-├── robots/                        ← pack = robot.yaml + models/ (docs/ROBOTS.md)
+├── robots/                        ← 빌트인 예시 pack (data only, docs/ROBOTS.md)
 │   ├── ur5e/robot.yaml            6-DoF arm
 │   ├── franka/robot.yaml          7-DoF arm
 │   └── kuka_iiwa_14/robot.yaml    7-DoF arm
@@ -125,23 +129,22 @@ newton-bridge/
 ├── workspace/                     호스트↔컨테이너 공유 (outputs, notebooks)
 ├── assets/_cache/                 fetch_assets.sh 의 상류 클론 (gitignored, ~2 GB)
 └── docs/
-    ├── README.md                  docs 인덱스 + 역할별 진입점
-    ├── INSTALL.md / USAGE.md / CONFIGURATION.md / VIEWER.md
-    ├── TROUBLESHOOTING.md / EXAMPLES.md
-    └── ARCHITECTURE.md / TOPICS.md / ROBOTS.md / DEFERRED_WORK.md
+    ├── README.md                  docs 인덱스 (사용자 여정 기준)
+    ├── INSTALL.md / USAGE.md      설치 → 일상 워크플로우
+    ├── ROBOTS.md                  새 로봇 추가 (외부 폴더 / URDF / xacro / MJCF)
+    ├── TROUBLESHOOTING.md         단계별 실패 모드
+    ├── CONFIGURATION.md           env + pack yaml + 토픽 + viewer 레퍼런스
+    └── ARCHITECTURE.md            (컨트리뷰터용) 레이어 경계, sync 모델
 ```
 
 ## 관련 문서
 
-전체 목록 + 역할별 진입점은 [docs/README.md](docs/README.md).
+처음 사용자는 순서대로 — 인덱스는 [docs/README.md](docs/README.md).
 
-- [docs/INSTALL.md](docs/INSTALL.md) — 호스트 prereq · 이미지 빌드 · verify
-- [docs/USAGE.md](docs/USAGE.md) — `run.sh` 하위명령 + 일상 워크플로우
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — env var + pack yaml 레퍼런스
-- [docs/VIEWER.md](docs/VIEWER.md) — viewer 모드 (rerun/gl/usd/file/null/none)
-- [docs/EXAMPLES.md](docs/EXAMPLES.md) — controller_demo · 센서 · Jupyter · 벤치
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — 단계별 실패 모드 + 조치
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 레이어 경계, sync/time 모델
-- [docs/TOPICS.md](docs/TOPICS.md) — 토픽/서비스 계약, 확장 경로
-- [docs/ROBOTS.md](docs/ROBOTS.md) — 새 robot pack 추가 (URDF/xacro/MJCF)
-- Newton 공식: <https://newton-physics.github.io/newton/latest/>
+1. [docs/INSTALL.md](docs/INSTALL.md) — 호스트 prereq · 이미지 빌드 · verify
+2. [docs/USAGE.md](docs/USAGE.md) — `run.sh` 하위명령 + 일상 워크플로우 (controller_demo, Jupyter, 벤치)
+3. [docs/ROBOTS.md](docs/ROBOTS.md) — 내 로봇 추가 (외부 폴더 / URDF / xacro / MJCF)
+4. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — 단계별 실패 모드 + 조치
+5. [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — env var · pack yaml · 토픽/서비스 · viewer 레퍼런스
+
+컨트리뷰터/내부 작업: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Newton 공식: <https://newton-physics.github.io/newton/latest/>

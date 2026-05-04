@@ -25,6 +25,21 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   run ./scripts/host/install.sh first (it installs git, rsync, etc.)"
 fi
 
+# -- pack manifest check ------------------------------------------------------
+# robot.yaml is the only git-tracked file inside each pack — if it's missing,
+# the pack is broken and this script can't fix it (we only populate models/).
+# Fail-fast with a precise message so users don't waste time blaming this
+# script for a deletion it didn't cause.
+for pack in franka kuka_iiwa_14 ur5e; do
+    if [[ ! -f "robots/${pack}/robot.yaml" ]]; then
+        die "robots/${pack}/robot.yaml is missing.
+  This file is git-tracked and was NOT touched by this script.
+  Likely cause: an earlier checkout / restore / manual edit removed it.
+  Recover with:  git restore robots/${pack}/robot.yaml
+  (or re-clone the repo to start fresh)"
+    fi
+done
+
 CACHE="${REPO_ROOT}/assets/_cache"
 mkdir -p "${CACHE}"
 

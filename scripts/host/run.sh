@@ -25,7 +25,27 @@ if command -v xhost >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
 fi
 
 # Robot pack selector — picks which robots/<name>/ the sim loads.
+#
+# Two modes:
+#   1. Built-in pack: ROBOT=<name> (default ur5e) → /workspace/robots/<name>
+#   2. External pack: EXTERNAL_PACK_HOST=/abs/host/path → /workspace/external_pack
+#      The host path is bind-mounted ro into the container and ROBOT_PACK is
+#      auto-pointed at it. The folder must contain robot.yaml + a flat URDF
+#      (xacro is not supported on this path — pre-process to URDF on the host).
 : "${ROBOT:=ur5e}"
+if [[ -n "${EXTERNAL_PACK_HOST:-}" ]]; then
+    if [[ ! -d "${EXTERNAL_PACK_HOST}" ]]; then
+        echo "[run.sh] EXTERNAL_PACK_HOST is not a directory: ${EXTERNAL_PACK_HOST}" >&2
+        exit 2
+    fi
+    if [[ ! -f "${EXTERNAL_PACK_HOST}/robot.yaml" ]]; then
+        echo "[run.sh] ${EXTERNAL_PACK_HOST}/robot.yaml not found — see docs/ROBOTS.md (Path D)" >&2
+        exit 2
+    fi
+    EXTERNAL_PACK_HOST="$(cd "${EXTERNAL_PACK_HOST}" && pwd)"  # absolutize
+    : "${ROBOT_PACK:=/workspace/external_pack}"
+    export EXTERNAL_PACK_HOST
+fi
 : "${ROBOT_PACK:=/workspace/robots/${ROBOT}}"
 : "${SYNC_MODE:=freerun}"
 : "${FREERUN_RATE:=realtime}"
@@ -99,6 +119,9 @@ usage: $0 [sim|shell|example <name>|jupyter|verify|upd|logs|down]
 
 env overrides:
   ROBOT=<name>          robots/<name>/ pack to load (default: ur5e)
+  EXTERNAL_PACK_HOST=<path>  host folder to use as the pack (URDF only).
+                             The folder must contain robot.yaml; meshes resolve
+                             relative to the URDF. See docs/ROBOTS.md (Path D).
   SYNC_MODE=freerun|sync
   FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
