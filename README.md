@@ -26,8 +26,8 @@
 ## Quick start
 
 ```bash
-./scripts/host/install.sh             # 호스트 prereq (base utils + docker + compose v2 + nvidia toolkit)
-./scripts/host/install.sh --with-ros  # + ROS 2 Jazzy Desktop + ur_description (verify_ros.sh 용)
+./scripts/host/install.sh             # 호스트 prereq (base utils + docker + compose v2 + nvidia toolkit + ur_description + xacro)
+./scripts/host/install.sh --with-ros  # + 전체 ROS 2 Jazzy Desktop (verify_ros.sh / controller_demo 용)
 ./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드
 ./scripts/host/build.sh               # Docker 이미지 빌드 (5~15분)
 ./scripts/host/run.sh verify          # 컨테이너 스모크 테스트
@@ -39,10 +39,12 @@ VIEWER=none ./scripts/host/run.sh sim # headless
 > 모든 `scripts/host/*.sh` 는 **재실행 안전 (idempotent)** — 이미 완료된 단계는 스킵합니다.
 
 > `install.sh` 는 **fresh Ubuntu 24.04** 에서 base utils (git, rsync, curl, jq, xhost) +
-> Docker Engine + compose v2 + (GPU 있으면) nvidia-container-toolkit 까지 설치합니다.
-> `--only-check` 로 현재 상태만 점검, `--with-ros` 로 호스트 ROS 2 Jazzy Desktop + `ur_description`
-> 까지 설치 (`verify_ros.sh` / `controller_demo.py` 용). **NVIDIA driver 는 감지만 하고 설치하지 않음**
-> — 없으면 `sudo ubuntu-drivers autoinstall && sudo reboot` 후 재실행.
+> Docker Engine + compose v2 + (GPU 있으면) nvidia-container-toolkit + ROS 2 apt repo +
+> `ros-jazzy-ur-description` + `ros-jazzy-xacro` 까지 설치합니다 (뒤 두 개는 `fetch_assets.sh`
+> 가 ur5e mesh/config/xacro 를 robot pack 으로 복사할 때 필요). `--only-check` 로 현재 상태만
+> 점검, `--with-ros` 로 호스트 전체 ROS 2 Jazzy Desktop (`verify_ros.sh` / `controller_demo.py` 용)
+> 추가 설치. **NVIDIA driver 는 감지만 하고 설치하지 않음** — 없으면
+> `sudo ubuntu-drivers autoinstall && sudo reboot` 후 재실행.
 
 > **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
 > X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·

@@ -7,9 +7,15 @@ robot:
   # xacro args passed as `mappings=` to xacro.process_file. The upstream
   # ur.urdf.xacro defaults `ur_type` to a nonsense placeholder so the robot
   # type MUST be set here. `name` becomes the <robot name="..."> attribute.
+  # `force_abs_paths=true` makes the upstream ur_macro emit `file://...`
+  # mesh URIs instead of `package://ur_description/...`. The absolute path
+  # initially resolves to the ROS share dir, but xacro_loader rewrites it
+  # to point at this pack's models/meshes/ tree so runtime mesh loads do
+  # NOT touch /opt/ros. See src/newton_bridge/xacro_loader.py.
   source_args:
     name: ur5e
     ur_type: ur5e
+    force_abs_paths: true
   base_position: [0.0, 0.0, 0.0]
 
 sim:

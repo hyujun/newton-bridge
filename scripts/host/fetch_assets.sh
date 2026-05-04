@@ -53,24 +53,61 @@ cp -r "${MENAGERIE}/kuka_iiwa_14/"*.xml robots/kuka_iiwa_14/models/
 cp -r "${MENAGERIE}/kuka_iiwa_14/assets" robots/kuka_iiwa_14/models/ 2>/dev/null || true
 
 # -- 4) ur5e ------------------------------------------------------------------
+# Goal: pack must be self-contained so the runtime never touches /opt/ros.
+# We copy urdf/ + meshes/ur5e/{visual,collision} + config/ur5e from the host's
+# ur_description share, then patch every `$(find ur_description)/...` reference
+# in the xacro files to a robot-pack-relative path. xacro_loader.py later
+# rewrites the `file://<ROS-share>/meshes/...` URIs that `force_abs_paths=true`
+# produces (see robots/ur5e/robot.yaml) to point at this same pack tree.
 log "populating robots/ur5e/models"
 mkdir -p robots/ur5e/models
 if ! dpkg -s ros-jazzy-ur-description >/dev/null 2>&1; then
     die "ros-jazzy-ur-description not installed.
   install it with:
-    ./scripts/host/install.sh --with-ros"
+    ./scripts/host/install.sh"
 fi
 UR_SHARE="/opt/ros/jazzy/share/ur_description"
 if command -v ros2 >/dev/null 2>&1; then
     UR_SHARE="$(ros2 pkg prefix ur_description 2>/dev/null || echo /opt/ros/jazzy)/share/ur_description"
 fi
 if [[ ! -d "${UR_SHARE}" ]]; then
-    die "ur_description installed but share path not found at ${UR_SHARE}
-  copy urdf/ + meshes/ manually into robots/ur5e/models/"
+    die "ur_description installed but share path not found at ${UR_SHARE}"
 fi
 log "  source: apt ros-jazzy-ur-description (${UR_SHARE})"
+
+# urdf/ (xacro files) — these will get patched below
 rsync -a --delete "${UR_SHARE}/urdf/" robots/ur5e/models/
-rsync -a --delete "${UR_SHARE}/meshes/ur5e/" robots/ur5e/models/meshes/ur5e/ 2>/dev/null || true
+
+# meshes/ur5e/{visual,collision} — fail loud, runtime mesh loader needs these
+[[ -d "${UR_SHARE}/meshes/ur5e/visual" ]] \
+    || die "missing ${UR_SHARE}/meshes/ur5e/visual — reinstall ros-jazzy-ur-description"
+[[ -d "${UR_SHARE}/meshes/ur5e/collision" ]] \
+    || die "missing ${UR_SHARE}/meshes/ur5e/collision — reinstall ros-jazzy-ur-description"
+mkdir -p robots/ur5e/models/meshes/ur5e
+rsync -a --delete "${UR_SHARE}/meshes/ur5e/visual/"    robots/ur5e/models/meshes/ur5e/visual/
+rsync -a --delete "${UR_SHARE}/meshes/ur5e/collision/" robots/ur5e/models/meshes/ur5e/collision/
+
+# config/ur5e/*.yaml + config/initial_positions.yaml — read by the xacro at
+# process time (joint_limits, kinematics, physical, visual). Must live inside
+# the pack so the patched xacro can resolve them without ROS.
+[[ -d "${UR_SHARE}/config/ur5e" ]] \
+    || die "missing ${UR_SHARE}/config/ur5e — reinstall ros-jazzy-ur-description"
+mkdir -p robots/ur5e/models/config
+rsync -a --delete "${UR_SHARE}/config/ur5e/" robots/ur5e/models/config/ur5e/
+[[ -f "${UR_SHARE}/config/initial_positions.yaml" ]] \
+    && cp "${UR_SHARE}/config/initial_positions.yaml" robots/ur5e/models/config/initial_positions.yaml
+
+# Replace every `$(find ur_description)` with a sentinel string. xacro_loader
+# substitutes the sentinel for the current pack's models/ dir before invoking
+# xacro, so includes, config-yaml refs, AND the `force_abs_paths`-generated
+# `file://<...>/meshes/...` URIs all resolve to this pack — never /opt/ros.
+# Why a sentinel and not a literal path? Host and container see the pack at
+# different absolute paths (e.g. .../newton-bridge/robots vs /workspace/robots),
+# so resolution has to happen at xacro process time, not now.
+log "  patching \$(find ur_description) refs in pack xacro files"
+for f in $(grep -rl 'find ur_description' robots/ur5e/models/ 2>/dev/null); do
+    sed -i "s|\$(find ur_description)|@@NEWTON_BRIDGE_PACK_DIR@@|g" "${f}"
+done
 
 log "done. Verify tree:"
 log "  robots/ur5e/models/*.urdf"

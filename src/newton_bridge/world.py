@@ -77,18 +77,21 @@ class NewtonWorld:
             # Process xacro in-process → URDF XML string, then hand it to the
             # URDF importer via a tempfile. (Passing XML directly trips a bug
             # where newton's importer calls os.path.abspath on the string for
-            # package:// resolution, producing nonsense paths.) The tempfile
-            # also lets resolve-robotics-uri-py fall back to AMENT_PREFIX_PATH
-            # for `package://ur_description/...` meshes.
+            # mesh URI resolution, producing nonsense paths.)
+            #
+            # xacro_loader rewrites every `$(find ur_description)` to the
+            # pack's own models/ dir and asserts the output URDF contains no
+            # `package://` / `/opt/ros/` references — so meshes resolve to
+            # robots/<name>/models/meshes/... and the runtime never touches
+            # the host or container ROS share.
             import tempfile
             from .xacro_loader import process_xacro
             urdf_xml = process_xacro(
                 src_path, args=self.pack["robot"].get("source_args") or {}
             )
             # Write to the OS temp dir (not pack_dir — it may be a read-only
-            # bind-mount in the container). package:// URIs in the URDF are
-            # resolved by resolve-robotics-uri-py via AMENT_PREFIX_PATH and
-            # don't depend on the URDF's on-disk location.
+            # bind-mount). The URDF's on-disk location doesn't matter because
+            # all mesh URIs are absolute file:// paths into the pack tree.
             with tempfile.NamedTemporaryFile(
                 "w", suffix=".urdf", delete=False
             ) as fh:

@@ -5,7 +5,8 @@
 #   2. docker compose v2 (docker-compose-plugin)
 #   3. NVIDIA Container Toolkit  (only if an NVIDIA GPU is detected)
 #   4. Add current user to the 'docker' group
-#   5. (optional) ROS 2 Jazzy Desktop + ur_description  (--with-ros)
+#   4a. ROS 2 apt repo + ur_description + xacro  (always — fetch_assets.sh needs them)
+#   4b. (optional) ROS 2 Jazzy Desktop  (--with-ros, for verify_ros.sh / controller_demo)
 #
 # Detects — but does NOT install — the NVIDIA driver. On fresh 24.04 you must
 # install a driver first (`sudo ubuntu-drivers autoinstall` then reboot) for
@@ -19,8 +20,8 @@
 # components. Requires sudo.
 #
 # Usage:
-#   ./install.sh                   # docker + compose (+ nvidia toolkit if GPU)
-#   ./install.sh --with-ros        # also install ROS 2 Jazzy Desktop on host
+#   ./install.sh                   # docker + compose + ur_description + xacro (+ nvidia toolkit if GPU)
+#   ./install.sh --with-ros        # also install full ROS 2 Jazzy Desktop on host
 #   ./install.sh --no-nvidia       # skip nvidia-container-toolkit even if GPU
 #   ./install.sh --only-check      # report what is installed, no changes
 set -euo pipefail
@@ -66,6 +67,7 @@ has_compose_v2()    { docker compose version >/dev/null 2>&1; }
 has_nvidia_gpu()    { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }
 has_nvidia_runtime(){ docker info 2>/dev/null | grep -q 'Runtimes:.*nvidia'; }
 has_ros_jazzy()     { [[ -f /opt/ros/jazzy/setup.bash ]] && dpkg -s ros-jazzy-desktop >/dev/null 2>&1; }
+has_ur_description(){ dpkg -s ros-jazzy-ur-description >/dev/null 2>&1; }
 needs_base_utils()  {
     local p
     for p in "${BASE_PKGS[@]}"; do
@@ -84,6 +86,7 @@ if has_docker; then
     log "  nvidia docker runtime:   $(has_nvidia_runtime && echo ok || echo missing)"
 fi
 log "  ROS 2 Jazzy Desktop:     $(has_ros_jazzy && echo ok || echo missing)"
+log "  ur_description (host):   $(has_ur_description && echo ok || echo missing)"
 
 if [[ "${ONLY_CHECK}" -eq 1 ]]; then
     log "check only — exiting"
@@ -169,37 +172,52 @@ else
     ${SUDO} systemctl restart docker
 fi
 
-# -- 4) (optional) ROS 2 Jazzy Desktop ---------------------------------------
+# -- 4a) ROS apt repo + ur_description + xacro (default) ---------------------
+# fetch_assets.sh reads /opt/ros/jazzy/share/ur_description on the host to
+# populate robots/ur5e/models/ (meshes, config, urdf). Without these two
+# packages, fetch_assets dies on a fresh Ubuntu install. The full Desktop
+# stack (rclpy, rviz, ...) stays gated behind --with-ros.
+ros_repo_setup() {
+    if ! locale -a 2>/dev/null | grep -qi 'en_US\.utf8'; then
+        ${SUDO} apt-get install -y --no-install-recommends locales
+        ${SUDO} locale-gen en_US en_US.UTF-8
+        ${SUDO} update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+    fi
+
+    ${SUDO} apt-get install -y --no-install-recommends software-properties-common
+    ${SUDO} add-apt-repository -y universe
+
+    if [[ ! -f /usr/share/keyrings/ros-archive-keyring.gpg ]]; then
+        ${SUDO} curl -fsSL -o /usr/share/keyrings/ros-archive-keyring.gpg \
+            https://raw.githubusercontent.com/ros/rosdistro/master/ros.key
+    fi
+    if [[ ! -f /etc/apt/sources.list.d/ros2.list ]]; then
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
+            | ${SUDO} tee /etc/apt/sources.list.d/ros2.list > /dev/null
+    fi
+    ${SUDO} apt-get update
+}
+
+if has_ur_description && dpkg -s ros-jazzy-xacro >/dev/null 2>&1; then
+    log "ur_description + xacro already installed — skipping"
+else
+    log "installing ur_description + xacro (needed by fetch_assets.sh)"
+    ros_repo_setup
+    ${SUDO} apt-get install -y --no-install-recommends \
+        ros-jazzy-ur-description ros-jazzy-xacro
+fi
+
+# -- 4b) (optional) ROS 2 Jazzy Desktop --------------------------------------
 if [[ "${WITH_ROS}" -eq 1 ]]; then
     if has_ros_jazzy \
-        && dpkg -s ros-jazzy-ur-description >/dev/null 2>&1 \
         && dpkg -s ros-jazzy-rmw-cyclonedds-cpp >/dev/null 2>&1; then
-        log "ROS 2 Jazzy Desktop + ur_description + rmw packages already installed — skipping"
+        log "ROS 2 Jazzy Desktop + rmw packages already installed — skipping"
     else
-        log "installing ROS 2 Jazzy Desktop + ur_description + both rmw implementations"
-
-        if ! locale -a 2>/dev/null | grep -qi 'en_US\.utf8'; then
-            ${SUDO} apt-get install -y --no-install-recommends locales
-            ${SUDO} locale-gen en_US en_US.UTF-8
-            ${SUDO} update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-        fi
-
-        ${SUDO} apt-get install -y --no-install-recommends software-properties-common
-        ${SUDO} add-apt-repository -y universe
-
-        if [[ ! -f /usr/share/keyrings/ros-archive-keyring.gpg ]]; then
-            ${SUDO} curl -fsSL -o /usr/share/keyrings/ros-archive-keyring.gpg \
-                https://raw.githubusercontent.com/ros/rosdistro/master/ros.key
-        fi
-        if [[ ! -f /etc/apt/sources.list.d/ros2.list ]]; then
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
-                | ${SUDO} tee /etc/apt/sources.list.d/ros2.list > /dev/null
-        fi
-
-        ${SUDO} apt-get update
+        log "installing ROS 2 Jazzy Desktop + both rmw implementations"
+        ros_repo_setup
         ${SUDO} apt-get install -y --no-install-recommends \
-            ros-jazzy-desktop ros-jazzy-ur-description ros-jazzy-xacro \
+            ros-jazzy-desktop \
             ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-rmw-fastrtps-cpp
     fi
 fi
