@@ -118,7 +118,14 @@ class ViewerThread:
         """Block until the viewer has been built (or failed). Returns True if ready."""
         return self.ready_event.wait(timeout=timeout)
 
-    def stop(self, timeout: float | None = 2.0) -> None:
+    def stop(self, timeout: float | None = 0.5) -> None:
+        """Signal the viewer thread to stop and best-effort join.
+
+        The thread is a daemon, so if join times out the process can still
+        exit — we prefer a snappy ^C over guaranteed clean teardown of GL
+        resources. A render in progress (begin_frame/log_state/end_frame)
+        may hold the thread inside a GPU call past the timeout; that's fine.
+        """
         self._shutdown_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)

@@ -412,11 +412,15 @@ class SimBridgeNode(Node):
                 break
             if not paused:
                 self._apply_latest_cmd()
+                if self.shutdown_requested:
+                    break
                 self._step_and_publish()
                 self._log_ready_once()
             elif step_pulse:
                 # Paused + '.' single-step → advance exactly one frame.
                 self._apply_latest_cmd()
+                if self.shutdown_requested:
+                    break
                 self._step_and_publish()
                 self._log_ready_once()
             self._periodic_telemetry(time.monotonic())
@@ -458,8 +462,12 @@ class SimBridgeNode(Node):
                 break
             if paused and step_pulse:
                 # Paused + '.' single-step → advance one frame even without a cmd.
+                if self.shutdown_requested:
+                    break
                 self._step_and_publish()
                 self._log_ready_once()
+            if self.shutdown_requested:
+                break
             if self._cmd_watchdog.is_stale(time.monotonic()):
                 self._publish_state(force=True)
             self._periodic_telemetry(time.monotonic())

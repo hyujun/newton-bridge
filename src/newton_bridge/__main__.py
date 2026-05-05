@@ -144,7 +144,18 @@ def main() -> int:
         f"sync={sync_mode}, viewer={viewer_mode}"
     )
 
+    # Track ^C count: first one requests graceful shutdown, second one
+    # forces immediate exit. Newton/Warp + rclpy + GL teardown can stack
+    # several seconds of latency on a clean shutdown; users who hit ^C twice
+    # are telling us they don't want to wait.
+    sigint_count = 0
+
     def _sigint(*_):
+        nonlocal sigint_count
+        sigint_count += 1
+        if sigint_count >= 2:
+            node.get_logger().warning("second shutdown signal — forcing exit")
+            os._exit(130)
         node.get_logger().warning("shutdown signal received")
         node.request_shutdown()
 
@@ -158,7 +169,7 @@ def main() -> int:
             node.run_freerun(rate_mode)
     finally:
         if viewer_thread is not None:
-            viewer_thread.stop(timeout=2.0)
+            viewer_thread.stop(timeout=0.5)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

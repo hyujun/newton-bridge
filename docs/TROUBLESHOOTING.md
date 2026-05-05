@@ -315,6 +315,21 @@ drive:
   stiffness: 1000.0    # 10× 감소
 ```
 
+### `Ctrl+C` 가 느리거나 멈춘 듯 보임
+
+**증상**: `^C` 를 눌러도 즉시 종료되지 않고 수 초간 정지.
+
+**원인**: graceful shutdown 이 viewer thread join (GL teardown), `rclpy.shutdown()` (DDS 정리), Warp/CUDA 컨텍스트 정리, 그리고 `docker compose run --rm` 의 컨테이너 제거를 차례로 수행. 합쳐 ~3–10초.
+
+**조치**: `^C` 를 한 번 더 누르면 `os._exit(130)` 으로 즉시 종료. 첫 번째는 graceful path 시도, 두 번째는 hard exit.
+
+```
+^C[WARN] shutdown signal received
+^C[WARN] second shutdown signal — forcing exit
+```
+
+10초 이상 걸리면 메인 루프가 step/render 안에서 막혔을 가능성 — 두 번째 `^C` 가 답.
+
 ### sync 에서 state 가 업데이트 안 됨
 
 `/joint_command` publish 필요 (publish 1회 = 1 step):
