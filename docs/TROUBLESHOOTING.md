@@ -364,11 +364,35 @@ Viewer overlay (GL imgui 패널 / Rerun timeseries) 도 같이 확인하면 어�
 **확인**:
 1. sim 이 `VIEWER=rerun` (기본) 으로 기동되었는지 — `VIEWER=none` 이면 포트가 안 열림
 2. 포트 충돌 — `ss -lntp | grep 9090`
-3. 원격 머신이면 SSH tunnel 필요:
+3. 원격 머신이면 SSH tunnel 필요 (web + gRPC 둘 다):
    ```bash
-   ssh -L 9090:localhost:9090 user@remote
+   ssh -L 9090:localhost:9090 -L 9876:localhost:9876 user@remote
    ```
 4. `network_mode: host` 라 포트 매핑 아니라 호스트에 직접 바인드
+
+호스트에서 listening 확인이 안 되면 컨테이너 안에서 직접 `/proc/net/tcp` 로 확인 (컨테이너에 `ss`/`netstat` 미설치):
+```bash
+NB=$(docker ps --filter ancestor=newton-bridge:latest -q)
+docker exec $NB python3 -c "
+for line in open('/proc/net/tcp'):
+    p = line.split()
+    if len(p) > 3 and p[3] == '0A':
+        print(p[1], 'port', int(p[1].split(':')[-1], 16))
+"
+# 9090 (=0x2382) 와 9876 (=0x2694) 둘 다 0.0.0.0 으로 LISTEN 이어야 정상
+```
+
+### Rerun 웹페이지는 뜨는데 데이터(로봇)가 안 보임
+
+**증상**: `http://localhost:9090` 은 열리고 wasm 도 로드됐는데 회색 화면 또는 "Connect to data source" 안내만 보임.
+
+**원인**: ViewerRerun 의 web UI(9090) 와 데이터 스트림(gRPC 9876) 이 별도 포트라, 웹 UI 가 자동으로 gRPC 에 붙지 않습니다. 한 번 수동 입력 필요.
+
+**조치**: UI 의 **Connection URL** 입력란에:
+```
+rerun+http://localhost:9876/proxy
+```
+포트를 바꿨다면(`RERUN_GRPC_PORT=9877` 등) 그 값으로 맞춥니다. 연결되면 좌측 트리에 `world/...`, `telemetry/...` 노드가 나타납니다.
 
 ### GL viewer 가 안 뜸
 

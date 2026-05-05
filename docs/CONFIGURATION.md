@@ -428,11 +428,19 @@ Newton 은 world-frame pose 만 제공하므로 현재 구현은 평탄한 `worl
 ./scripts/host/run.sh sim       # 브라우저: http://localhost:9090
 ```
 
+브라우저로 `http://localhost:9090` 접속 → wasm 로드 후 **"Connection URL" 입력 화면**이 뜨면 다음을 입력:
+
+```
+rerun+http://localhost:9876/proxy
+```
+
+ViewerRerun 의 web UI(9090) 와 데이터 스트림(gRPC 9876) 이 별도 포트라, 웹 UI 가 자동으로 gRPC 에 붙지 않고 한 번 수동 입력이 필요합니다. 연결되면 좌측 트리에 `world/...` (로봇 메시) 와 `telemetry/...` (step_hz, render_hz, realtime_factor) 가 나타납니다.
+
 - `network_mode: host` 덕에 포트 매핑 불필요
-- 원격 머신이면 SSH tunnel: `ssh -L 9090:localhost:9090 user@remote`
+- 원격 머신이면 SSH tunnel: `ssh -L 9090:localhost:9090 -L 9876:localhost:9876 user@remote` (web + gRPC 둘 다 필요)
 - `VIEWER_WIDTH` / `VIEWER_HEIGHT` 는 무시 (웹은 클라이언트가 뷰포트 소유)
 - 동시 녹화: `RERUN_RECORD_TO=/workspace/workspace/runs/session.rrd ./scripts/host/run.sh sim` → 호스트에서 `rerun workspace/runs/session.rrd` 로 재생
-- 포트 충돌: `RERUN_WEB_PORT=9091 RERUN_GRPC_PORT=9877 ./scripts/host/run.sh sim`
+- 포트 충돌: `RERUN_WEB_PORT=9091 RERUN_GRPC_PORT=9877 ./scripts/host/run.sh sim` → Connection URL 도 `rerun+http://localhost:9877/proxy` 로 맞춰서 입력
 
 ### `gl` — 네이티브 X11 창
 
