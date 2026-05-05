@@ -90,8 +90,11 @@ if [[ ! -d "${UR_SHARE}" ]]; then
 fi
 log "  source: apt ros-jazzy-ur-description (${UR_SHARE})"
 
-# urdf/ (xacro files) — these will get patched below
-rsync -a --delete "${UR_SHARE}/urdf/" robots/ur5e/models/
+# urdf/ (xacro files) — these will get patched below. Source has NO trailing
+# slash so the `urdf/` subdir is preserved; the sentinel resolves to
+# `<pack>/models/` and includes reference `<sentinel>/urdf/ur_macro.xacro`,
+# mirroring `share/ur_description/urdf/`.
+rsync -a --delete "${UR_SHARE}/urdf" robots/ur5e/models/
 
 # meshes/ur5e/{visual,collision} — fail loud, runtime mesh loader needs these
 [[ -d "${UR_SHARE}/meshes/ur5e/visual" ]] \

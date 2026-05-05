@@ -62,13 +62,16 @@ def process_xacro(path: Path | str, args: Mapping[str, object] | None = None) ->
         ) from exc
 
     src = Path(path).resolve()
-    # `<pack>/models/<file>.xacro` → pack_models_dir = `<pack>/models`. The
-    # ur_description tree we copied in mirrors `<pack>/models/{urdf,meshes,
-    # config}` against ur_description's `share/{urdf,meshes,config}`, so
-    # substituting the sentinel with `<pack>/models` keeps `$(find
-    # ur_description)/meshes/...` style paths valid.
-    pack_models_dir = src.parent
-    if pack_models_dir.name != "models":
+    # Source must live somewhere under `<pack>/models/`. The ur_description
+    # tree we copied in mirrors `<pack>/models/{urdf,meshes,config}` against
+    # `share/ur_description/{urdf,meshes,config}`, so substituting the
+    # sentinel with `<pack>/models` keeps `$(find ur_description)/...` paths
+    # valid — including for top-level xacros that themselves live in
+    # `<pack>/models/urdf/`.
+    pack_models_dir = next(
+        (p for p in src.parents if p.name == "models"), None
+    )
+    if pack_models_dir is None:
         raise RuntimeError(
             f"xacro source must live under <pack>/models/, got: {src}"
         )
@@ -82,21 +85,31 @@ def process_xacro(path: Path | str, args: Mapping[str, object] | None = None) ->
             f"{src} still contains `$(find ur_description)` — re-run "
             "scripts/host/fetch_assets.sh to apply the sentinel patch."
         )
-    patched = raw.replace(PACK_DIR_SENTINEL, str(pack_models_dir))
-
-    # Also need to patch sibling includes the same way, since xacro reads
-    # them from disk. Easiest: stage a sibling-mirrored tempdir.
+    # Stage a sibling-mirrored tempdir, and substitute the sentinel for the
+    # *tempdir* root (not the original pack). Sentinel-patched includes resolve
+    # to absolute paths, so if we substituted the original pack location xacro
+    # would follow the include into the original tree — where the sentinel is
+    # still raw — and fail. Keeping the substitution scoped to the tempdir
+    # guarantees every traversal stays inside the staged copy.
     with tempfile.TemporaryDirectory(prefix="newton_bridge_xacro_") as tmp:
         tmp_dir = Path(tmp)
-        for f in pack_models_dir.rglob("*.xacro"):
+        # Mirror non-xacro siblings (config/*.yaml, meshes/...) too: xacro
+        # reads YAML config files at process time, and those files reference
+        # paths relative to their own dir.
+        for f in pack_models_dir.rglob("*"):
+            if not f.is_file():
+                continue
             rel = f.relative_to(pack_models_dir)
             dst = tmp_dir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            text = f.read_text().replace(PACK_DIR_SENTINEL, str(pack_models_dir))
-            dst.write_text(text)
-        # The substituted file we'll actually feed to xacro
-        tmp_src = tmp_dir / src.name
-        tmp_src.write_text(patched)
+            if f.suffix in (".xacro", ".yaml", ".urdf"):
+                dst.write_text(
+                    f.read_text().replace(PACK_DIR_SENTINEL, str(tmp_dir))
+                )
+            else:
+                dst.write_bytes(f.read_bytes())
+
+        tmp_src = tmp_dir / src.relative_to(pack_models_dir)
 
         mappings = {str(k): str(v) for k, v in (args or {}).items()}
         try:
@@ -105,7 +118,19 @@ def process_xacro(path: Path | str, args: Mapping[str, object] | None = None) ->
             raise RuntimeError(f"xacro processing failed for {src}: {exc}") from exc
         urdf_xml = doc.toxml()
 
+        # Any `file://<tmp_dir>/...` URIs that force_abs_paths emitted need
+        # to point at the real pack on disk (the tempdir is about to vanish).
+        urdf_xml = urdf_xml.replace(str(tmp_dir), str(pack_models_dir))
+
     urdf_xml = _rewrite_ros_share_to_pack(urdf_xml, pack_models_dir)
+    # Newton's URDF importer (resolve_urdf_asset) does not understand the
+    # `file://` scheme: anything that doesn't start with package://, model://,
+    # http(s):// is treated as a plain path, and `file:///abs/path` fails the
+    # `os.path.isabs` check, so it gets joined with the URDF's source dir
+    # (a /tmp file when we pass XML), producing `/tmp/file:///abs/path`.
+    # Strip the prefix everywhere — we've already rewritten the targets to
+    # pack-local absolute paths, which Newton handles correctly.
+    urdf_xml = urdf_xml.replace("file://", "")
     _assert_self_contained(urdf_xml, src)
     return urdf_xml
 

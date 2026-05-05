@@ -3,7 +3,7 @@
 
 robot:
   source: xacro
-  source_rel: models/ur.urdf.xacro
+  source_rel: models/urdf/ur.urdf.xacro
   # xacro args passed as `mappings=` to xacro.process_file. The upstream
   # ur.urdf.xacro defaults `ur_type` to a nonsense placeholder so the robot
   # type MUST be set here. `name` becomes the <robot name="..."> attribute.
