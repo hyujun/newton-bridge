@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -34,6 +35,12 @@ class RateMeter:
 
     The window defaults to 1.0s; any tick older than `window_s` before `now`
     is dropped on the next `rate()` call. `tick()` is O(1) amortized.
+
+    Thread safety: producer (physics/main) calls `tick()` while consumer
+    (viewer thread) may concurrently call `rate()` for the HUD. `rate()`
+    mutates the deque (popleft of stale stamps), so all access is guarded
+    by an internal lock. The lock is uncontended in practice — both sides
+    call ~hundreds of times/sec at most.
     """
 
     def __init__(self, window_s: float = 1.0) -> None:
@@ -42,25 +49,29 @@ class RateMeter:
         self.window_s = float(window_s)
         self._stamps: collections.deque[float] = collections.deque()
         self._last_tick: float | None = None
+        self._lock = threading.Lock()
 
     def tick(self, now: float) -> None:
-        self._stamps.append(float(now))
-        self._last_tick = float(now)
+        with self._lock:
+            self._stamps.append(float(now))
+            self._last_tick = float(now)
 
     def rate(self, now: float) -> float:
         cutoff = float(now) - self.window_s
-        while self._stamps and self._stamps[0] < cutoff:
-            self._stamps.popleft()
-        return len(self._stamps) / self.window_s
+        with self._lock:
+            while self._stamps and self._stamps[0] < cutoff:
+                self._stamps.popleft()
+            return len(self._stamps) / self.window_s
 
     @property
     def last_tick(self) -> float | None:
         return self._last_tick
 
     def time_since_last(self, now: float) -> float | None:
-        if self._last_tick is None:
+        last = self._last_tick
+        if last is None:
             return None
-        return float(now) - self._last_tick
+        return float(now) - last
 
 
 @dataclass

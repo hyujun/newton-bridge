@@ -14,6 +14,7 @@ from typing import Any, Callable
 import pytest
 
 from newton_bridge.snapshot import StateSnapshot
+from newton_bridge.telemetry import TelemetryRegistry
 from newton_bridge.viewer_thread import ViewerThread
 
 
@@ -111,6 +112,7 @@ class FakeViewer:
 def _make_thread(
     viewer: Any | Exception | None,
     viewer_hz: float | None = 1000.0,
+    telemetry: TelemetryRegistry | None = None,
 ) -> tuple[ViewerThread, StateSnapshot]:
     snap = StateSnapshot(FakeState(-1), FakeState(-2))
 
@@ -119,7 +121,7 @@ def _make_thread(
             raise viewer
         return viewer
 
-    vt = ViewerThread(snap, factory, viewer_hz=viewer_hz)
+    vt = ViewerThread(snap, factory, viewer_hz=viewer_hz, telemetry=telemetry)
     return vt, snap
 
 
@@ -345,3 +347,118 @@ def test_stop_is_idempotent() -> None:
     vt.stop(timeout=1.0)
     vt.stop(timeout=1.0)  # second call: no-op
     assert not vt.is_alive
+
+
+# ---------- telemetry HUD / scalars (PR2) --------------------------------
+
+
+class _FakeImgui:
+    """Stand-in for the imgui module passed to register_ui_callback."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.colored: list[tuple[tuple[float, ...], str]] = []
+
+    def text(self, s: str) -> None:
+        self.lines.append(s)
+
+    def text_colored(self, color: tuple[float, ...], s: str) -> None:
+        self.colored.append((color, s))
+
+
+class FakeGLViewer(FakeViewer):
+    """FakeViewer + register_ui_callback (mirrors ViewerGL surface)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ui_callbacks: list[tuple[str, Callable[[Any], None]]] = []
+
+    def register_ui_callback(
+        self, callback: Callable[[Any], None], position: str = "side"
+    ) -> None:
+        self.ui_callbacks.append((position, callback))
+
+
+class FakeRerunViewer(FakeViewer):
+    """FakeViewer + log_scalar (mirrors ViewerRerun surface)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scalars: list[tuple[str, float]] = []
+
+    def log_scalar(self, name: str, value: float) -> None:
+        self.scalars.append((name, float(value)))
+
+
+def test_hud_callback_registered_when_telemetry_provided() -> None:
+    """ViewerGL-style viewers should get an HUD callback registered."""
+    tel = TelemetryRegistry(physics_dt=0.01)
+    fv = FakeGLViewer()
+    vt, _ = _make_thread(fv, telemetry=tel)
+    vt.start()
+    vt.wait_ready(timeout=1.0)
+    # One registration on "stats" position.
+    assert len(fv.ui_callbacks) == 1
+    assert fv.ui_callbacks[0][0] == "stats"
+    vt.stop(timeout=1.0)
+
+
+def test_hud_callback_not_registered_without_telemetry() -> None:
+    fv = FakeGLViewer()
+    vt, _ = _make_thread(fv, telemetry=None)
+    vt.start()
+    vt.wait_ready(timeout=1.0)
+    assert fv.ui_callbacks == []
+    vt.stop(timeout=1.0)
+
+
+def test_hud_callback_renders_telemetry_lines() -> None:
+    """Invoking the registered callback with a fake imgui must produce
+    sim/step/cmd/pub/render/state lines."""
+    tel = TelemetryRegistry(physics_dt=0.01)
+    fv = FakeGLViewer()
+    vt, _ = _make_thread(fv, telemetry=tel)
+    vt.start()
+    vt.wait_ready(timeout=1.0)
+    cb = fv.ui_callbacks[0][1]
+    imgui = _FakeImgui()
+    cb(imgui)
+    vt.stop(timeout=1.0)
+
+    joined = " | ".join(imgui.lines + [c[1] for c in imgui.colored])
+    for token in ("sim", "step", "cmd", "pub", "render", "state="):
+        assert token in joined, f"missing {token!r} in HUD output: {joined}"
+
+
+def test_log_scalar_emitted_on_render() -> None:
+    """ViewerRerun-style viewers should get telemetry as scalar timeseries."""
+    tel = TelemetryRegistry(physics_dt=0.01)
+    fv = FakeRerunViewer()
+    vt, snap = _make_thread(fv, telemetry=tel, viewer_hz=1000.0)
+    vt.start()
+    vt.wait_ready(timeout=1.0)
+    snap.publish(FakeState(payload=1), sim_time=0.5)
+    assert _wait_until(lambda: len(fv.frames) >= 1, timeout=1.0)
+    vt.stop(timeout=1.0)
+
+    names = {n for n, _ in fv.scalars}
+    assert {
+        "telemetry/step_hz",
+        "telemetry/cmd_hz",
+        "telemetry/pub_hz",
+        "telemetry/render_hz",
+        "telemetry/realtime_factor",
+    } <= names
+
+
+def test_note_render_called_per_frame() -> None:
+    tel = TelemetryRegistry(physics_dt=0.01)
+    fv = FakeViewer()
+    vt, snap = _make_thread(fv, telemetry=tel, viewer_hz=1000.0)
+    vt.start()
+    vt.wait_ready(timeout=1.0)
+    snap.publish(FakeState(payload=1), sim_time=0.5)
+    assert _wait_until(lambda: len(fv.frames) >= 1, timeout=1.0)
+    vt.stop(timeout=1.0)
+    # render meter should have ticked at least once.
+    assert tel.render.last_tick is not None

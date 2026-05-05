@@ -106,7 +106,7 @@ Viewer 가 별도 thread 가 되면 "viewer 가 그려지고 있다" 가 더 이
 | `/clock` | publish_rate_hz 에 동기 | `newton_bridge.node` |
 | `/joint_states` | 100Hz (freerun) / step 당 1회 + watchdog idle republish (sync) | `newton_bridge.node` |
 | viewer 렌더 | `sim.viewer_hz` (기본 60Hz, wall-clock, physics/커맨드 rate 와 독립; viewer thread 에서 pacing) | `RenderTicker` in `ticks.py` (driven by `ViewerThread`) |
-| 상태 라인 | 1Hz stderr (`STATUS_LOG_HZ` 로 조절) | `StatusLogger` |
+| 상태 라인 | 1Hz ROS 로거 (`STATUS_LOG_HZ` 로 조절) | `StatusLogger` (rclpy logger 로 라우팅) |
 | `/sim/diagnostics` | 1Hz (고정) | `SimBridgeNode._publish_diagnostics` |
 | 호스트 `use_sim_time` | `/clock` 구독 | 호스트 launch/node 설정 |
 

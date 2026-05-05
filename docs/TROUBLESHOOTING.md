@@ -343,6 +343,18 @@ ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
 
 `/joint_command` 가 끊겼는데도 `/joint_states` 가 `sync_timeout_ms` (기본 100ms) 주기로 오면 idle watchdog 동작 — step 은 안 일어나고 현재 상태만 재퍼블리시.
 
+### Telemetry status line 이 안 보임
+
+1Hz `[INFO] [newton_bridge]: ... step ...Hz | ... | state=RUNNING` 한 줄도 안 나오는 경우.
+
+**확인 순서**:
+
+1. `STATUS_LOG_HZ` 가 0 아닌지: `docker compose exec sim env | grep STATUS_LOG_HZ`. 기본 `1.0` 이고, `0` 으로 두면 의도적으로 꺼집니다.
+2. `LOG_LEVEL` 이 `INFO` 이하인지: `WARNING` 이상이면 INFO 라인이 드롭되고 STALL 상태에서만 WARN 한 줄이 나옵니다. 평소에 안 보이는 게 정상이라면 RUNNING 이라는 뜻.
+3. 위 두 가지가 정상인데도 안 나온다면 stdlib `logging` root handler 가 깔려있는지: bridge 가 `_configure_logging()` 에서 `basicConfig(stream=sys.stderr)` 를 호출합니다. 외부 코드 (예: `import` 시점에 미리 `logging.basicConfig` 호출) 가 먼저 가져갔다면 무시됩니다 — `force=True` 가 아닌 한 한 번 등록된 handler 가 우선.
+
+Viewer overlay (GL imgui 패널 / Rerun timeseries) 도 같이 확인하면 어느 쪽이 죽었는지 빨리 좁혀집니다 — overlay 가 보이는데 terminal 만 안 나오면 logging 설정 문제, 둘 다 안 보이면 telemetry registry 자체가 tick 을 못 받고 있음 (physics step 이 한 번도 안 일어났거나 viewer thread 가 죽음).
+
 ---
 
 ## Viewer 문제

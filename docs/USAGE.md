@@ -201,13 +201,15 @@ latest-wins, 단위 m/s².
 
 ## 시뮬 건강 모니터링
 
-Sync 모드에서는 viewer 가 그려지고 있어도 physics 가 실제로 돌고 있는지 한눈에 보기 어렵습니다. Bridge 는 두 채널로 상태를 노출합니다.
+Sync 모드에서는 viewer 가 그려지고 있어도 physics 가 실제로 돌고 있는지 한눈에 보기 어렵습니다. Bridge 는 세 채널로 상태를 노출합니다.
 
-**Terminal**: 1Hz stderr 라인. 평소엔 INFO, STALL 일 땐 WARN 으로 자동 승격:
+**Terminal**: 1Hz ROS 로그 라인. 평소엔 INFO, STALL 일 땐 WARN 으로 자동 승격:
 ```
-[newton_bridge] sim 12.34s | step 240Hz (rt 1.00) | cmd 100Hz | pub 100Hz | render 60Hz | state=RUNNING
+[INFO] [newton_bridge]: [newton_bridge] sim 12.34s | step 240Hz (rt 1.00) | cmd 100Hz | pub 100Hz | render 60Hz | state=RUNNING
 ```
-끄려면 `STATUS_LOG_HZ=0`.
+끄려면 `STATUS_LOG_HZ=0`. 한 줄도 안 보이면 `LOG_LEVEL=INFO` (기본) 인지, root logger handler 가 살아있는지 확인.
+
+**Viewer**: GL 모드는 좌측 통계 패널, Rerun 모드는 web UI 의 timeseries 패널 (`telemetry/*`) 에 동일 메트릭이 실시간으로 그려집니다.
 
 **ROS**: `/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`, 1Hz):
 ```bash

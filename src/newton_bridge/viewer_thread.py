@@ -38,6 +38,7 @@ import time
 from typing import Any, Callable
 
 from .snapshot import StateSnapshot
+from .telemetry import TelemetryRegistry
 from .ticks import RenderTicker
 
 # Floor for viewer_hz=0 passthrough so the thread doesn't busy-spin (decision #4).
@@ -74,14 +75,20 @@ class ViewerThread:
         viewer_factory: Callable[[], Any],
         viewer_hz: float | None = 60.0,
         *,
+        telemetry: TelemetryRegistry | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._snapshot = snapshot
         self._factory = viewer_factory
         self._viewer_hz = viewer_hz
+        self._telemetry = telemetry
         self._sleep = sleeper
         self._clock = clock
+        # Last sim_time pulled off the snapshot. Used by the HUD callback
+        # (which runs on the GL thread but needs sim_time from the snapshot
+        # consumed in this same thread).
+        self._last_sim_time: float = 0.0
 
         # Lifecycle / signalling
         self.ready_event = threading.Event()
@@ -196,6 +203,19 @@ class ViewerThread:
             except Exception:
                 log.exception("set_reset_callback failed; UI Reset will not work")
 
+        # Telemetry HUD: ViewerGL exposes register_ui_callback(cb, position)
+        # where cb receives the imgui module. We register on every viewer
+        # that has the method — others (Rerun/USD/File/Null) skip.
+        if (
+            viewer is not None
+            and self._telemetry is not None
+            and hasattr(viewer, "register_ui_callback")
+        ):
+            try:
+                viewer.register_ui_callback(self._draw_hud, position="stats")
+            except Exception:
+                log.exception("register_ui_callback failed; HUD will not show")
+
         self.ready_event.set()
 
         ticker = RenderTicker(render_hz=self._viewer_hz)
@@ -249,13 +269,70 @@ class ViewerThread:
         with view:
             try:
                 viewer.begin_frame(view.sim_time)
+                self._last_sim_time = float(view.sim_time)
                 viewer.log_state(view.state)
-                # Telemetry overlay hook (filled in by PR #3).
+                self._log_telemetry_scalars(viewer)
                 end = getattr(viewer, "end_frame", None)
                 if callable(end):
                     end()
             except Exception:
                 log.exception("viewer render failed")
+        if self._telemetry is not None:
+            self._telemetry.note_render(self._clock())
+
+    def _log_telemetry_scalars(self, viewer: Any) -> None:
+        """For viewers with a `log_scalar` API (Rerun), emit telemetry as
+        time-series so the user gets a live FPS/Hz panel in the web UI.
+        ViewerGL also exposes `log_scalar` but its HUD is handled by the
+        imgui callback path, so we still emit here — the data goes into the
+        same recording stream and is harmless."""
+        if self._telemetry is None:
+            return
+        log_scalar = getattr(viewer, "log_scalar", None)
+        if not callable(log_scalar):
+            return
+        snap = self._telemetry.snapshot(self._clock(), self._last_sim_time)
+        try:
+            log_scalar("telemetry/step_hz", snap.step_hz)
+            log_scalar("telemetry/cmd_hz", snap.cmd_hz)
+            log_scalar("telemetry/pub_hz", snap.pub_hz)
+            log_scalar("telemetry/render_hz", snap.render_hz)
+            log_scalar("telemetry/realtime_factor", snap.realtime_factor)
+        except Exception:
+            log.exception("log_scalar failed")
+
+    def _draw_hud(self, imgui: Any) -> None:
+        """imgui callback: 5–6 lines of telemetry in the GL stats panel.
+
+        Runs on the GL thread inside `viewer.render()`. We snapshot the
+        registry here (cheap; locks are uncontended) so the numbers reflect
+        what physics actually did most recently.
+        """
+        if self._telemetry is None:
+            return
+        try:
+            snap = self._telemetry.snapshot(self._clock(), self._last_sim_time)
+            imgui.text(f"sim {snap.sim_time:.2f}s")
+            imgui.text(f"step {snap.step_hz:.0f}Hz (rt {snap.realtime_factor:.2f})")
+            imgui.text(f"cmd {snap.cmd_hz:.0f}Hz")
+            imgui.text(f"pub {snap.pub_hz:.0f}Hz")
+            imgui.text(f"render {snap.render_hz:.0f}Hz")
+            # State color-code: STALL red, IDLE yellow, RUNNING green, INIT grey.
+            colors = {
+                "STALL": (1.0, 0.3, 0.3, 1.0),
+                "IDLE": (0.9, 0.8, 0.2, 1.0),
+                "RUNNING": (0.4, 0.9, 0.4, 1.0),
+                "INIT": (0.7, 0.7, 0.7, 1.0),
+            }
+            color = colors.get(snap.state, (1.0, 1.0, 1.0, 1.0))
+            text_colored = getattr(imgui, "text_colored", None)
+            if callable(text_colored):
+                text_colored(color, f"state={snap.state}")
+            else:
+                imgui.text(f"state={snap.state}")
+        except Exception:
+            # Don't crash the GL thread on any HUD glitch.
+            log.exception("HUD draw failed")
 
     # ---------- viewer-thread → main signalling helpers ----------------------
 

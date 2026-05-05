@@ -7,10 +7,12 @@ Reads env:
     FREERUN_RATE    realtime | max (freerun only, default realtime)
     VIEWER          rerun | gl | usd | file | null | none (default rerun)
     STATUS_LOG_HZ   1Hz status line cadence (default 1.0; 0 disables)
+    LOG_LEVEL       stdlib logging level (default INFO; DEBUG/WARNING/ERROR)
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import sys
@@ -43,7 +45,48 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _configure_logging() -> None:
+    """Install a stderr handler on the root logger.
+
+    Without this, stdlib `logging` drops everything below WARNING (no handler
+    means `lastResort` kicks in, which only emits WARN+). The status logger
+    in `telemetry.py` uses INFO for healthy ticks, so users would only ever
+    see the line when the pipeline stalled. Also picks up
+    `viewer_thread.log.exception(...)` calls.
+    """
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="[%(name)s] %(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+
+
+def _ros_logger_emit(node):
+    """Adapter from `StatusLogger`'s `(level, msg)` callable to ROS logging.
+
+    StatusLogger uses stdlib level ints (INFO=20, WARNING=30). ROS rclpy
+    loggers expose `.info() / .warn() / .error() / .debug()`. Map by level so
+    STALL lines arrive at WARN and show up in ROS log viewers / bag tooling.
+    """
+    rl = node.get_logger()
+
+    def emit(level: int, msg: str) -> None:
+        if level >= logging.ERROR:
+            rl.error(msg)
+        elif level >= logging.WARNING:
+            rl.warn(msg)
+        elif level >= logging.INFO:
+            rl.info(msg)
+        else:
+            rl.debug(msg)
+
+    return emit
+
+
 def main() -> int:
+    _configure_logging()
     pack_dir = _resolve_pack_dir()
     sync_mode = os.environ.get("SYNC_MODE", "freerun").lower()
     rate_mode = os.environ.get("FREERUN_RATE", "realtime").lower()
@@ -88,7 +131,6 @@ def main() -> int:
         sync_mode=(sync_mode == "sync"),
         sync_timeout_s=sync_timeout_s,
     )
-    status_logger = StatusLogger(period_s=_env_float("STATUS_LOG_HZ", 1.0))
 
     # ViewerThread: the factory closure is called inside the thread so the
     # GL context (if any) is owned by the thread. mode='none' returns None
@@ -109,7 +151,9 @@ def main() -> int:
             )
             return None
 
-    viewer_thread = ViewerThread(snapshot, viewer_factory, viewer_hz=viewer_hz)
+    viewer_thread = ViewerThread(
+        snapshot, viewer_factory, viewer_hz=viewer_hz, telemetry=telemetry
+    )
     viewer_thread.start()
     viewer_thread.wait_ready(timeout=10.0)
     if viewer_thread.build_error is not None:
@@ -135,7 +179,13 @@ def main() -> int:
         snapshot=snapshot,
         viewer_thread=viewer_thread,
         telemetry=telemetry,
-        status_logger=status_logger,
+    )
+    # Wire the status logger to the ROS node's logger so the 1Hz line shows
+    # up alongside other bridge logs (and at WARN on STALL). Has to happen
+    # after node construction since rclpy logger lookup needs the node.
+    node.status_logger = StatusLogger(
+        period_s=_env_float("STATUS_LOG_HZ", 1.0),
+        logger=_ros_logger_emit(node),
     )
     node.ready_log_info = (
         f"Newton ready: dof={world.total_dof}, "
