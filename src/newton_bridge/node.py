@@ -213,10 +213,18 @@ class SimBridgeNode(Node):
     # -- helpers ------------------------------------------------------------
     def _step_and_publish(self) -> None:
         """One physics step + the bookkeeping that goes with it."""
+        t0 = time.perf_counter()
         self.world.step()
-        self.telemetry.note_step(time.monotonic())
+        t1 = time.perf_counter()
+        now = time.monotonic()
+        self.telemetry.note_step(now)
+        self.telemetry.note_phase("step", t1 - t0, now)
         self._publish_state()
+        t2 = time.perf_counter()
+        self.telemetry.note_phase("publish_state", t2 - t1, time.monotonic())
         self._publish_snapshot()
+        t3 = time.perf_counter()
+        self.telemetry.note_phase("publish_snapshot", t3 - t2, time.monotonic())
 
     def _publish_snapshot(self) -> None:
         if self.snapshot is None:
@@ -234,6 +242,7 @@ class SimBridgeNode(Node):
         names = self._latest_cmd["names"]
         if names is None:
             return
+        t0 = time.perf_counter()
         if any(
             self._latest_cmd[k] is not None for k in ("positions", "velocities", "efforts")
         ):
@@ -247,6 +256,9 @@ class SimBridgeNode(Node):
         self._latest_cmd["positions"] = None
         self._latest_cmd["velocities"] = None
         self._latest_cmd["efforts"] = None
+        self.telemetry.note_phase(
+            "apply_cmd", time.perf_counter() - t0, time.monotonic()
+        )
 
     def _publish_clock(self) -> None:
         sec = int(self.world.sim_time)
@@ -397,11 +409,15 @@ class SimBridgeNode(Node):
         # before the first step lands.
         self._publish_snapshot()
         while rclpy.ok() and not self.shutdown_requested:
+            t_spin0 = time.perf_counter()
             step_pulse = self._drain_viewer_signals()
             if self.shutdown_requested:
                 break
             paused = self.viewer_thread is not None and self.viewer_thread.is_paused()
             rclpy.spin_once(self, timeout_sec=0.0)
+            self.telemetry.note_phase(
+                "spin", time.perf_counter() - t_spin0, time.monotonic()
+            )
             if self.shutdown_requested:
                 break
             if not paused:

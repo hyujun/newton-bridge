@@ -74,6 +74,51 @@ class RateMeter:
         return float(now) - last
 
 
+class PhaseTimer:
+    """Sliding-window per-phase wall-time tracker.
+
+    Producer calls `sample(dt_seconds, now)` once per occurrence; consumer
+    reads `avg(now)` / `max(now)` over the trailing `window_s`. Same locking
+    model as RateMeter — a single internal lock guards the deque.
+    """
+
+    def __init__(self, window_s: float = 1.0) -> None:
+        if window_s <= 0:
+            raise ValueError(f"window_s must be > 0 (got {window_s})")
+        self.window_s = float(window_s)
+        # entries: (timestamp, dt_seconds)
+        self._samples: collections.deque[tuple[float, float]] = collections.deque()
+        self._lock = threading.Lock()
+
+    def sample(self, dt_seconds: float, now: float) -> None:
+        with self._lock:
+            self._samples.append((float(now), float(dt_seconds)))
+
+    def _evict(self, now: float) -> None:
+        cutoff = float(now) - self.window_s
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+
+    def avg(self, now: float) -> float:
+        with self._lock:
+            self._evict(now)
+            if not self._samples:
+                return 0.0
+            return sum(dt for _, dt in self._samples) / len(self._samples)
+
+    def max(self, now: float) -> float:
+        with self._lock:
+            self._evict(now)
+            if not self._samples:
+                return 0.0
+            return max(dt for _, dt in self._samples)
+
+    def count(self, now: float) -> int:
+        with self._lock:
+            self._evict(now)
+            return len(self._samples)
+
+
 @dataclass
 class TelemetrySnapshot:
     """Plain-data view of the registry, safe to ship across threads / topics."""
@@ -88,9 +133,12 @@ class TelemetrySnapshot:
     time_since_cmd: float | None
     time_since_step: float | None
     state: str
+    # Per-phase wall time (seconds). Empty until any sample lands.
+    phases_avg_s: dict[str, float] | None = None
+    phases_max_s: dict[str, float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "sim_time": self.sim_time,
             "step_count": self.step_count,
             "step_hz": self.step_hz,
@@ -102,6 +150,13 @@ class TelemetrySnapshot:
             "time_since_step": self.time_since_step,
             "state": self.state,
         }
+        if self.phases_avg_s:
+            for name, v in self.phases_avg_s.items():
+                d[f"phase_{name}_avg_ms"] = v * 1000.0
+        if self.phases_max_s:
+            for name, v in self.phases_max_s.items():
+                d[f"phase_{name}_max_ms"] = v * 1000.0
+        return d
 
 
 class TelemetryRegistry:
@@ -135,6 +190,12 @@ class TelemetryRegistry:
         self.pub = RateMeter(window_s)
         self.render = RateMeter(window_s)
 
+        # Per-phase wall-time timers for the main physics tick. Phases are
+        # added lazily via `note_phase` so callers don't need to register
+        # names up front.
+        self._phases: dict[str, PhaseTimer] = {}
+        self._phase_window_s = float(window_s)
+
         self._step_count = 0
         # Tracks "cmd_rate>0 but step_rate==0" sub-stall — when this becomes
         # true we record the time so we can wait >1s before flipping to STALL.
@@ -154,6 +215,13 @@ class TelemetryRegistry:
 
     def note_render(self, now: float) -> None:
         self.render.tick(now)
+
+    def note_phase(self, name: str, dt_seconds: float, now: float) -> None:
+        timer = self._phases.get(name)
+        if timer is None:
+            timer = PhaseTimer(self._phase_window_s)
+            self._phases[name] = timer
+        timer.sample(dt_seconds, now)
 
     @property
     def step_count(self) -> int:
@@ -202,6 +270,13 @@ class TelemetryRegistry:
 
     def snapshot(self, now: float, sim_time: float) -> TelemetrySnapshot:
         step_hz = self.step.rate(now)
+        phases_avg: dict[str, float] = {}
+        phases_max: dict[str, float] = {}
+        for name, timer in self._phases.items():
+            if timer.count(now) == 0:
+                continue
+            phases_avg[name] = timer.avg(now)
+            phases_max[name] = timer.max(now)
         return TelemetrySnapshot(
             sim_time=float(sim_time),
             step_count=self._step_count,
@@ -213,6 +288,8 @@ class TelemetryRegistry:
             time_since_cmd=self.cmd.time_since_last(now),
             time_since_step=self.step.time_since_last(now),
             state=self.classify(now),
+            phases_avg_s=phases_avg or None,
+            phases_max_s=phases_max or None,
         )
 
 
@@ -277,7 +354,12 @@ class StatusLogger:
 
 
 def format_status(snap: TelemetrySnapshot) -> str:
-    """Format a TelemetrySnapshot into the one-line status string from the plan."""
+    """Format a TelemetrySnapshot into the one-line status string from the plan.
+
+    When per-phase timings are present, append a second line breaking down
+    average wall time per tick phase (ms). Helps diagnose RTF<1 by pinpointing
+    which phase blew the per-tick budget.
+    """
     parts = [
         f"sim {snap.sim_time:.2f}s",
         f"step {snap.step_hz:.0f}Hz (rt {snap.realtime_factor:.2f})",
@@ -286,4 +368,12 @@ def format_status(snap: TelemetrySnapshot) -> str:
         f"render {snap.render_hz:.0f}Hz",
         f"state={snap.state}",
     ]
-    return "[newton_bridge] " + " | ".join(parts)
+    line = "[newton_bridge] " + " | ".join(parts)
+    if snap.phases_avg_s:
+        # Stable order: largest avg first (most actionable for the operator).
+        items = sorted(
+            snap.phases_avg_s.items(), key=lambda kv: kv[1], reverse=True
+        )
+        phase_parts = [f"{name} {dt * 1000.0:.2f}ms" for name, dt in items]
+        line += "\n[newton_bridge] phases: " + " | ".join(phase_parts)
+    return line
