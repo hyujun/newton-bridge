@@ -8,7 +8,7 @@ robot:
   base_position: [0.0, 0.0, 0.0]
 
 sim:
-  physics_hz: 100
+  physics_hz: 400
   substeps: 1
   solver: mujoco
   ground_plane: true

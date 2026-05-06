@@ -49,7 +49,11 @@ class NewtonWorld:
         self._build_model()
         self._build_solver()
         self._build_view()
-        self.last_contacts = None  # populated by step(); used by sensors
+        # Pre-allocate the contacts buffer so model.collide() can write
+        # in-place. Mandatory for CUDA graph capture (graphs cannot allocate).
+        # Sensors read this same buffer via self.last_contacts.
+        self.contacts = self.model.contacts()
+        self.last_contacts = self.contacts
         self._control_target_pos_host = np.zeros(self.total_dof, dtype=np.float32)
         self._control_target_vel_host = np.zeros(self.total_dof, dtype=np.float32)
         self._control_effort_host = np.zeros(self.total_dof, dtype=np.float32)
@@ -58,6 +62,12 @@ class NewtonWorld:
         # builder.joint_q / joint_target_pos already put us at home, but
         # mirror into _control_target_pos_host + re-assert for reset() parity.
         self._apply_home_pose()
+
+        # CUDA graph for the per-step kernel sequence. Captured lazily on
+        # the first cuda step(); set back to None whenever the model changes
+        # (reset / set_gravity / etc.) to force a recapture.
+        self._step_graph: wp.Graph | None = None
+        self._capture_step_graph()
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_model(self) -> None:
@@ -245,6 +255,16 @@ class NewtonWorld:
         """Runtime gravity change (Phase 6a). Wraps model.set_gravity(vec3)."""
         g = [float(gravity[0]), float(gravity[1]), float(gravity[2])]
         self.model.set_gravity(g)
+        # Newton solvers cache model state at construction; tell the solver
+        # to re-read, then recapture the graph so it picks up the new params.
+        notify = getattr(self.solver, "notify_model_changed", None)
+        if callable(notify):
+            try:
+                notify()
+            except TypeError:
+                # Some Newton revisions take a flags arg; recapture anyway.
+                pass
+        self._capture_step_graph()
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_view(self) -> None:
@@ -373,19 +393,58 @@ class NewtonWorld:
             self.control.joint_f.assign(self._control_effort_host)
 
     # -- NEWTON API SURFACE -------------------------------------------------
-    def step(self) -> None:
+    def _step_kernels(self) -> None:
+        """Per-tick GPU kernel sequence — the body that gets graph-captured.
+
+        Mirrors the Newton 1.x official robot examples (anymal_d, h1, g1 …):
+        for each substep, refresh contacts in-place, clear per-state forces,
+        run one solver step, then swap state_0/state_1. Because state swap
+        runs *inside* the captured sequence, the graph encodes a fixed
+        ping-pong over two pre-allocated state buffers — every launch
+        produces the same input→output memory mapping.
+        """
         dt = self.physics_dt / self.substeps
-        contacts = None
         for _ in range(self.substeps):
-            contacts = self.model.collide(self.state_0)
+            self.model.collide(self.state_0, self.contacts)
             self.state_0.clear_forces()
-            self.solver.step(self.state_0, self.state_1, self.control, contacts, dt)
+            self.solver.step(
+                self.state_0, self.state_1, self.control, self.contacts, dt
+            )
             self.state_0, self.state_1 = self.state_1, self.state_0
-        # Expose the post-step contacts so downstream sensors (Phase 5) can
-        # read without calling m.collide() again.
-        self.last_contacts = contacts
+
+    def _capture_step_graph(self) -> None:
+        """Capture `_step_kernels` into a CUDA graph (cuda devices only).
+
+        Falls back silently on CPU: `step()` then runs the eager path.
+        Call again whenever `self.model` or `self.solver` configuration
+        changes (e.g. set_gravity) — the captured graph references the
+        device buffers as they were at capture time.
+        """
+        self._step_graph = None
+        try:
+            dev = wp.get_device(self.device)
+        except Exception:
+            return
+        if not dev.is_cuda:
+            return
+        with wp.ScopedCapture() as capture:
+            self._step_kernels()
+        self._step_graph = capture.graph
+
+    def step(self) -> None:
+        if self._step_graph is not None:
+            wp.capture_launch(self._step_graph)
+        else:
+            self._step_kernels()
+        # Sensors read self.last_contacts; the buffer is pre-allocated and
+        # rewritten in-place by collide(), so the reference stays valid.
+        self.last_contacts = self.contacts
         self.sim_time += self.physics_dt
 
     def reset(self) -> None:
         self.sim_time = 0.0
         self._apply_home_pose()
+        # Home pose write touches state_0 / state_1 buffers. The captured
+        # graph references those same buffers, so no recapture is needed
+        # here — but keep this comment as a tripwire if reset() ever starts
+        # rebuilding state objects.
