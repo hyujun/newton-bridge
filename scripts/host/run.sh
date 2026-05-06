@@ -97,11 +97,12 @@ case "${MODE}" in
             python3 -m newton.examples "$@"
         ;;
     jupyter)
+        # `newton[notebook]` ships JupyterLab, not classic Notebook — use `lab`.
         exec "${COMPOSE[@]}" run --rm --service-ports newton-bridge \
-            jupyter notebook \
+            jupyter lab \
                 --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
                 --ServerApp.token="${JUPYTER_TOKEN:-newton}" \
-                --notebook-dir=/workspace/workspace/notebooks
+                --ServerApp.root_dir=/workspace/workspace/notebooks
         ;;
     verify)
         exec "${COMPOSE[@]}" run --rm newton-bridge \

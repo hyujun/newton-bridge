@@ -11,7 +11,7 @@
 | `sim` / (생략) | sim 프로세스 기동 (`python -m newton_bridge`) | `ROBOT=ur5e`, `SYNC_MODE=freerun`, `VIEWER=rerun` |
 | `shell` | 컨테이너 안 bash (up -d 후 exec) | — |
 | `example <name>` | `python -m newton.examples <name> ...` | viewer 는 인자로 지정 |
-| `jupyter` | Jupyter notebook @ host:8888 | `JUPYTER_TOKEN=newton`, `/workspace/workspace/notebooks/` |
+| `jupyter` | JupyterLab @ host:8888 | `JUPYTER_TOKEN=newton`, `/workspace/workspace/notebooks/` |
 | `verify` | `scripts/container/verify.sh` — 11-섹션 smoke test | — |
 | `upd` | `docker compose up -d` (백그라운드) | — |
 | `logs` | `docker compose logs -f` | — |
@@ -323,7 +323,7 @@ python -c "from newton import examples; import pkgutil; \
 
 ---
 
-## `jupyter` 모드 — 노트북
+## `jupyter` 모드 — JupyterLab
 
 ```bash
 ./scripts/host/run.sh jupyter
