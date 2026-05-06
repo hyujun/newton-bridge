@@ -14,6 +14,7 @@ from newton_bridge.telemetry import (
     STATE_INIT,
     STATE_RUNNING,
     STATE_STALL,
+    PhaseTimer,
     RateMeter,
     StatusLogger,
     TelemetryRegistry,
@@ -285,3 +286,96 @@ def test_format_status_includes_all_metrics() -> None:
     assert "pub" in s
     assert "render" in s
     assert f"state={snap.state}" in s
+
+
+# ---------- PhaseTimer ----------------------------------------------------
+
+
+def test_phase_timer_empty() -> None:
+    pt = PhaseTimer()
+    assert pt.avg(now=0.0) == 0.0
+    assert pt.max(now=0.0) == 0.0
+    assert pt.count(now=0.0) == 0
+
+
+def test_phase_timer_avg_and_max() -> None:
+    pt = PhaseTimer(window_s=1.0)
+    pt.sample(0.001, now=0.1)
+    pt.sample(0.003, now=0.2)
+    pt.sample(0.002, now=0.3)
+    assert pt.count(now=0.5) == 3
+    assert pt.avg(now=0.5) == pytest.approx(0.002)
+    assert pt.max(now=0.5) == pytest.approx(0.003)
+
+
+def test_phase_timer_drops_old_samples() -> None:
+    pt = PhaseTimer(window_s=1.0)
+    pt.sample(0.005, now=0.0)  # will fall out of window
+    pt.sample(0.001, now=2.0)
+    pt.sample(0.002, now=2.5)
+    assert pt.count(now=2.7) == 2
+    assert pt.max(now=2.7) == pytest.approx(0.002)
+
+
+def test_phase_timer_rejects_zero_window() -> None:
+    with pytest.raises(ValueError):
+        PhaseTimer(window_s=0)
+
+
+# ---------- TelemetryRegistry.note_phase / snapshot phases ----------------
+
+
+def test_registry_note_phase_lazy_creation() -> None:
+    r = _reg()
+    r.note_phase("step", 0.001, now=0.1)
+    r.note_phase("publish_state", 0.002, now=0.1)
+    r.note_phase("step", 0.003, now=0.2)
+    snap = r.snapshot(now=0.5, sim_time=0.5)
+    assert snap.phases_avg_s is not None
+    assert snap.phases_avg_s["step"] == pytest.approx(0.002)
+    assert snap.phases_avg_s["publish_state"] == pytest.approx(0.002)
+    assert snap.phases_max_s["step"] == pytest.approx(0.003)
+
+
+def test_registry_snapshot_no_phases_when_unused() -> None:
+    r = _reg()
+    snap = r.snapshot(now=0.5, sim_time=0.5)
+    assert snap.phases_avg_s is None
+    assert snap.phases_max_s is None
+    # as_dict should not contain any phase_* keys.
+    assert not any(k.startswith("phase_") for k in snap.as_dict())
+
+
+def test_registry_snapshot_phase_keys_in_dict() -> None:
+    r = _reg()
+    r.note_phase("step", 0.0015, now=0.1)
+    r.note_phase("publish_state", 0.0035, now=0.1)
+    d = r.snapshot(now=0.5, sim_time=0.5).as_dict()
+    assert d["phase_step_avg_ms"] == pytest.approx(1.5)
+    assert d["phase_publish_state_avg_ms"] == pytest.approx(3.5)
+    assert d["phase_step_max_ms"] == pytest.approx(1.5)
+
+
+def test_format_status_appends_phase_line_when_present() -> None:
+    r = _reg()
+    r.note_step(now=0.5)
+    r.note_phase("step", 0.0008, now=0.5)
+    r.note_phase("publish_state", 0.0032, now=0.5)
+    r.note_phase("publish_snapshot", 0.0006, now=0.5)
+    snap = r.snapshot(now=0.6, sim_time=0.6)
+    s = format_status(snap)
+    assert "\n[newton_bridge] phases:" in s
+    # Sorted by avg desc → publish_state should come before step in the line.
+    phase_line = s.split("\n", 1)[1]
+    assert phase_line.index("publish_state") < phase_line.index("step ")
+    assert "3.20ms" in phase_line
+    assert "0.80ms" in phase_line
+
+
+def test_format_status_omits_phase_line_when_no_phases() -> None:
+    r = _reg()
+    r.note_step(now=0.5)
+    snap = r.snapshot(now=0.6, sim_time=0.6)
+    s = format_status(snap)
+    assert "phases:" not in s
+    assert "\n" not in s
