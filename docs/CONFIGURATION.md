@@ -162,7 +162,6 @@ ros:
   primary_articulation: arm          # /joint_states 에 퍼블리시될 articulation label
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100           # freerun 의 state 퍼블리시 rate
   sync_timeout_ms:     100           # sync 모드 전용. /joint_command 가 이 시간 동안
                                      # 안 오면 현재 상태를 /joint_states 로 재퍼블리시
                                      # (step 없음). 구독자가 굶지 않게 하기 위함
@@ -211,7 +210,6 @@ articulation_pattern: "*"            # optional, default "*"
 ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100
 ```
 
 승격 규칙 ([`_promote_robot_yaml`](../src/newton_bridge/robot_pack.py#L51)):
@@ -262,8 +260,8 @@ Per-joint `joints.<name>.drive.mode` 로 섞을 수 있음. 메시지에 세 필
 
 | Direction | Topic | Type | Rate | QoS | Note |
 |---|---|---|---|---|---|
-| pub | `/clock` | `rosgraph_msgs/Clock` | physics_hz 또는 publish 시점 | Reliable, depth=10 | 외부 노드는 `use_sim_time: true` 로 구독 |
-| pub | `/joint_states` | `sensor_msgs/JointState` | `publish_rate_hz` (freerun) / per-step (sync) + `sync_timeout_ms` idle republish | Reliable, depth=10 | `name` 순서는 pack 의 `joint_names`. position/velocity/effort 3필드 모두 채움 |
+| pub | `/clock` | `rosgraph_msgs/Clock` | 매 physics step | Reliable, depth=10 | 외부 노드는 `use_sim_time: true` 로 구독 |
+| pub | `/joint_states` | `sensor_msgs/JointState` | 매 physics step (sync 는 추가로 `sync_timeout_ms` idle republish) | Reliable, depth=10 | `name` 순서는 pack 의 `joint_names`. position/velocity/effort 3필드 모두 채움 |
 | pub | `/tf` | `tf2_msgs/TFMessage` | `/joint_states` 와 동일 시점 | Reliable, depth=10 | `ros.publish_tf` (default `true`) 로 on/off. 각 body 를 `tf_root_frame` 의 child 로 퍼블리시 |
 | sub | `/joint_command` | `sensor_msgs/JointState` | 외부 publish rate | Reliable, depth=10 | position/velocity/effort 필드 각각 드라이브 채널로 매핑 (위 §Drive Mode) |
 | sub | `/sim/set_gravity` | `geometry_msgs/Vector3` | latest-wins | Reliable, depth=10 | 런타임 gravity 변경. 단위 m/s² |
@@ -311,8 +309,8 @@ ros2 service call /sim/reset std_srvs/srv/Trigger "{}"
 | | freerun | sync |
 |---|---|---|
 | sim step | 자율 | `/joint_command` publish 수신 시 |
-| `/clock` publish | publish 시점마다 | 매 step + watchdog idle republish |
-| `/joint_states` | `publish_rate_hz` | 매 step + `sync_timeout_ms` idle republish |
+| `/clock` publish | 매 step | 매 step + watchdog idle republish |
+| `/joint_states` | 매 step | 매 step + `sync_timeout_ms` idle republish |
 | 뷰어 렌더 | `sim.viewer_hz` 로 제한, **viewer thread 가 독립적으로 pacing** | 동일 — sync 모드여도 viewer 는 viewer_hz 로 계속 그림 (idle 일 땐 마지막 snapshot 보여줌) |
 | 사용 케이스 | 관찰/로깅, loose-sync 제어 | RL rollout, deterministic 테스트 |
 

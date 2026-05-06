@@ -8,7 +8,7 @@ robot:
   base_position: [0.0, 0.0, 0.0]
 
 sim:
-  physics_hz: 400
+  physics_hz: 100
   substeps: 1
   solver: mujoco
   ground_plane: true
@@ -39,4 +39,3 @@ drive:
 ros:
   joint_states_topic:   /joint_states
   joint_command_topic:  /joint_command
-  publish_rate_hz:      100

@@ -65,7 +65,7 @@ def test_scene_yaml_direct_load(tmp_path: Path) -> None:
                 ],
             }
         ],
-        "ros": {"publish_rate_hz": 50, "primary_articulation": "arm_a"},
+        "ros": {"primary_articulation": "arm_a"},
     }
     (pack / "scene.yaml").write_text(yaml.safe_dump(scene_cfg))
 

@@ -149,7 +149,7 @@ ros2 topic hz /clock
 # physics_hz 대비 실제 sim rate 측정. UR5e@400Hz 는 RTX 3070 Ti 에서 대략 ~4000Hz
 ```
 
-`/clock` 퍼블리시 rate 이 실제 sim step rate 의 상한. `publish_rate_hz: 100` 이면 state/tf 는 100Hz 로 토픽 rate 제한됨 (sim 은 빠르게 돌지만 ROS 노출은 rate-limit).
+`/clock`, `/joint_states`, `/tf` 모두 매 physics step 마다 퍼블리시되므로 `ros2 topic hz` 결과는 실제 sim step rate 와 일치한다.
 
 ---
 

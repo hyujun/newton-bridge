@@ -51,4 +51,3 @@ drive:
 ros:
   joint_states_topic:   /joint_states
   joint_command_topic:  /joint_command
-  publish_rate_hz:      100

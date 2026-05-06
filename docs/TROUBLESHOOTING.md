@@ -260,7 +260,7 @@ export CYCLONEDDS_URI=file:///home/$USER/.cyclonedds.xml
 
 ### 컨테이너에서 `ros2 topic hz /joint_states` 가 0Hz
 
-**freerun 모드**: `publish_rate_hz` 가 호스트 ROS 2 노드 기준이므로 호스트에서 측정. 컨테이너 안에서는 `ros2 topic hz` 가 sub 를 뜨면서 DDS discovery 타이밍이 꼬일 수 있음.
+**freerun 모드**: `/joint_states` 는 매 physics step 퍼블리시되므로 정상이라면 `physics_hz` (또는 `FREERUN_RATE=max` 면 그 이상) 에 가까운 rate 가 보여야 함. 컨테이너 안에서는 `ros2 topic hz` 가 sub 를 뜨면서 DDS discovery 타이밍이 꼬일 수 있어 호스트에서 측정 권장.
 
 **sync 모드**: `/joint_command` 가 한 번도 publish 되지 않았고 `sync_timeout_ms` (기본 100ms) 도 안 지났다면 초기 startup publish 1회만 보임. 주기적 command 를 내리거나 `controller_demo.py --mode sync` 로 루프.
 

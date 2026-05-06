@@ -2,9 +2,9 @@
 
 Topics (standard types, stable contract):
     pub  /clock             rosgraph_msgs/Clock    (every physics step)
-    pub  /joint_states      sensor_msgs/JointState (rate-limited in freerun,
-                                                    per-step in sync +
-                                                    watchdog republish when idle)
+    pub  /joint_states      sensor_msgs/JointState (every physics step in both
+                                                    modes; sync also republishes
+                                                    on watchdog idle)
     pub  /sim/diagnostics   diagnostic_msgs/DiagnosticArray  (1Hz telemetry)
     sub  /joint_command     sensor_msgs/JointState (position targets, rad;
                                                     partial name match OK).
@@ -78,8 +78,6 @@ class SimBridgeNode(Node):
         ros_cfg = self.pack["ros"]
         sim_cfg = self.pack["sim"]
         self._joint_names: list[str] = list(self.pack["joint_names"])
-        self._publish_rate_hz: float = float(ros_cfg.get("publish_rate_hz", 100.0))
-        self._pub_interval: float = 1.0 / self._publish_rate_hz
 
         # Telemetry — created here if caller didn't pass one (eases tests).
         self.telemetry = telemetry or TelemetryRegistry(
@@ -162,11 +160,10 @@ class SimBridgeNode(Node):
         else:
             self.get_logger().info(
                 f"freerun mode: stepping @ {1.0/world.physics_dt:.0f}Hz, "
-                f"publishing /joint_states @ {self._publish_rate_hz:.0f}Hz, "
+                f"publishing /joint_states per step, "
                 f"{render_note}"
             )
 
-        self._last_pub_wall: float = 0.0
         self._last_diag_wall: float = 0.0
 
     # -- topic callbacks ----------------------------------------------------
@@ -203,7 +200,7 @@ class SimBridgeNode(Node):
         self._latest_cmd["positions"] = None
         self._latest_cmd["velocities"] = None
         self._latest_cmd["efforts"] = None
-        self._publish_state(force=True)
+        self._publish_state()
         self._publish_snapshot()
 
     def _log_ready_once(self) -> None:
@@ -218,7 +215,7 @@ class SimBridgeNode(Node):
         """One physics step + the bookkeeping that goes with it."""
         self.world.step()
         self.telemetry.note_step(time.monotonic())
-        self._publish_state(force=(self.sync_mode == "sync"))
+        self._publish_state()
         self._publish_snapshot()
 
     def _publish_snapshot(self) -> None:
@@ -259,11 +256,8 @@ class SimBridgeNode(Node):
         msg.clock.nanosec = nsec
         self.pub_clock.publish(msg)
 
-    def _publish_state(self, force: bool = False) -> None:
+    def _publish_state(self) -> None:
         now_wall = time.monotonic()
-        if not force and now_wall < self._last_pub_wall + self._pub_interval:
-            return
-        self._last_pub_wall = now_wall
 
         q = self.world.read_joint_positions()
         qd = self.world.read_joint_velocities()
@@ -446,7 +440,7 @@ class SimBridgeNode(Node):
         """
         # Publish initial state + snapshot so late subscribers and the viewer
         # thread both see something immediately.
-        self._publish_state(force=True)
+        self._publish_state()
         self._publish_snapshot()
         # Spin timeout: divide watchdog window ~5 ways for republish jitter
         # control. With viewer in its own thread, we no longer cap by the
@@ -469,5 +463,5 @@ class SimBridgeNode(Node):
             if self.shutdown_requested:
                 break
             if self._cmd_watchdog.is_stale(time.monotonic()):
-                self._publish_state(force=True)
+                self._publish_state()
             self._periodic_telemetry(time.monotonic())

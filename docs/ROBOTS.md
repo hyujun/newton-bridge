@@ -56,7 +56,6 @@ ros:
   primary_articulation: arm  # 어떤 articulation 이 /joint_states 에 퍼블리시될지
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100
   publish_tf:          true      # Phase 4
   tf_root_frame:       world
   publish_frames:      []        # [] = 전체, 또는 whitelist
@@ -110,7 +109,6 @@ joints:
 ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100
 
 # Optional. fnmatch glob against model.articulation_label. Defaults to "*"
 # which matches every articulation. Override when multiple robots share the
@@ -236,7 +234,6 @@ drive:
 ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100
 ```
 
 ### 5) `fetch_assets.sh` 에 한 블록 추가
@@ -372,7 +369,6 @@ drive:
 ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz:     100
 ```
 
 ### 3) mesh 경로 정리 (필요 시)

@@ -79,8 +79,7 @@ Viewer 가 별도 thread 가 되면 "viewer 가 그려지고 있다" 가 더 이
 ### freerun (default)
 
 - sim 자체 루프가 `world.step()` 을 주도, `FREERUN_RATE=realtime` 이면 wall-clock 에 맞춰 `time.sleep` 으로 페이싱, `FREERUN_RATE=max` 면 가능한 빠르게.
-- `/clock` 은 매 퍼블리시 주기마다 송출 (상태 퍼블리시와 함께).
-- `/joint_states` 는 `robot.yaml: ros.publish_rate_hz` 기준 (기본 100Hz).
+- `/clock`, `/joint_states`, `/tf` 는 매 step (substeps 포함한 한 번의 `world.step()` 완료 직후) 함께 송출. rate-limit 없음.
 - `/joint_command` 는 latest-wins. 스텝 진입 직전에 한 번만 drive target 에 반영.
 - 외부 컨트롤러가 `use_sim_time: true` 를 켜면 `/clock` 기준으로 타임스탬프 맞음.
 
@@ -103,8 +102,8 @@ Viewer 가 별도 thread 가 되면 "viewer 가 그려지고 있다" 가 더 이
 |---|---|---|
 | `physics_hz` | 400Hz | `robot.yaml: sim.physics_hz` |
 | `substeps` | 1 | `robot.yaml: sim.substeps` (solver 안정성용) |
-| `/clock` | publish_rate_hz 에 동기 | `newton_bridge.node` |
-| `/joint_states` | 100Hz (freerun) / step 당 1회 + watchdog idle republish (sync) | `newton_bridge.node` |
+| `/clock` | 매 physics step | `newton_bridge.node` |
+| `/joint_states` | 매 physics step (sync 는 추가로 watchdog idle republish) | `newton_bridge.node` |
 | viewer 렌더 | `sim.viewer_hz` (기본 60Hz, wall-clock, physics/커맨드 rate 와 독립; viewer thread 에서 pacing) | `RenderTicker` in `ticks.py` (driven by `ViewerThread`) |
 | 상태 라인 | 1Hz ROS 로거 (`STATUS_LOG_HZ` 로 조절) | `StatusLogger` (rclpy logger 로 라우팅) |
 | `/sim/diagnostics` | 1Hz (고정) | `SimBridgeNode._publish_diagnostics` |
@@ -135,7 +134,6 @@ drive:
 ros:
   joint_states_topic: /joint_states
   joint_command_topic: /joint_command
-  publish_rate_hz: int
 ```
 
 에셋(URDF/MJCF/STL)은 gitignore. `scripts/host/fetch_assets.sh` 가 외부에서 끌어옴. 새 pack 을 추가하거나 외부 `*_description` 패키지(URDF/xacro/MJCF)를 붙이는 절차는 [ROBOTS.md](ROBOTS.md) 참조.
