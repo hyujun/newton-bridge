@@ -151,6 +151,49 @@ ros2 topic hz /clock
 
 `/clock`, `/joint_states`, `/tf` 모두 매 physics step 마다 퍼블리시되므로 `ros2 topic hz` 결과는 실제 sim step rate 와 일치한다.
 
+### F. Softbody fingertip pads (hybrid 모드)
+
+핑거팁 위 deformable pad 같은 soft body 를 link 에 핀 한 채 시뮬하려면 pack 의 articulation 에 `softbodies:` 블록만 추가하면 됩니다. NewtonWorld 가 자동으로 hybrid 모드 (rigid solver + SolverVBD + CollisionPipeline) 로 빌드합니다. 별도 env var / 플래그 없음.
+
+```yaml
+# robots/<my_pack>/robot.yaml (또는 scene.yaml 의 articulation 항목)
+joint_names: [...]
+home_pose: {...}
+drive: {...}
+
+softbodies:
+  - name: left_fingertip_pad
+    asset_rel: softbody/pad.npz       # vertices + tet_indices 만 가진 .npz
+    pos: [0.0, 0.0, 0.0]              # link 좌표가 아니라 "월드 spawn" — attach 가 즉시 끌어감
+    rot: [0.0, 0.0, 0.0, 1.0]         # xyzw
+    scale: 1.0
+    material: {density: 100, k_mu: 1.0e6, k_lambda: 1.0e6, k_damp: 1.0e-6}
+    particle_radius: 0.003
+    attach:
+      body: left_fingertip            # URDF/MJCF link name (importer prefix 자동 매칭)
+      vertex_indices: [0, 1, 2]       # mesh vertex 인덱스 — 이 파티클들이 link 에 핀
+    contact: {ke: 2.0e6, kd: 1.0e-7, mu: 0.5}
+```
+
+`.npz` 는 `np.savez(path, vertices=V, tet_indices=T)` 로 만들면 됩니다 — 다른 키는 무시. pack 디렉토리 기준 상대 경로:
+
+```
+robots/my_pack/
+├── robot.yaml
+├── models/<arm>.urdf
+└── softbody/
+    └── pad.npz
+```
+
+실행은 평상시와 동일 — softbody 가 있으면 자동으로 step 순서가 hybrid 패턴으로 전환됩니다:
+
+```bash
+ROBOT=my_pack ./scripts/host/run.sh sim          # 빌트인 pack
+EXTERNAL_PACK_HOST=$HOME/my_pack ./scripts/host/run.sh sim   # 외부 pack
+```
+
+스키마 / 제약 / step 순서 상세는 [CONFIGURATION.md §Softbody 모드](CONFIGURATION.md#softbody-모드).
+
 ---
 
 ## `/joint_command` 보내는 법

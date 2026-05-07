@@ -144,7 +144,7 @@ worlds:
             friction: 0.1            # Coulomb 마찰
             limit_ke: 10000.0        # joint limit penalty Kp
             limit_kd: 100.0          # joint limit penalty Kd
-        softbodies:                  # optional, per-articulation (in progress)
+        softbodies:                  # optional, per-articulation (hybrid mode)
           - name: left_fingertip_pad
             asset_rel: softbody/pad.npz   # pack-relative .npz (vertices + tet_indices)
             pos: [0.0, 0.0, 0.0]          # 월드 spawn 위치 (default 원점)
@@ -240,11 +240,29 @@ ros:
 - `sensors:` 있으면 scene 로 carry-through
 - `ros.primary_articulation` 기본값 = `<pack_dir 이름>` (예: `ur5e`)
 
-### Softbody 모드 (in progress)
+### Softbody 모드
 
-`softbodies:` 가 비어있지 않으면 NewtonWorld 가 hybrid 모드로 빌드됩니다 — rigid solver (`sim.solver`) 옆에 별도 `SolverVBD` 와 `CollisionPipeline` 이 함께 생성되고, 각 spec 의 `.npz` (`vertices`, `tet_indices`) 가 `builder.add_soft_mesh` 로 추가됩니다. `attach.vertex_indices` 의 파티클은 `model.particle_mass=0` 으로 핀 됩니다.
+`softbodies:` 가 비어있지 않으면 NewtonWorld 가 자동으로 hybrid 모드로 빌드됩니다 — rigid solver (`sim.solver`) 옆에 별도 `SolverVBD` 와 `CollisionPipeline` 이 함께 생성되고, 각 spec 의 `.npz` (`vertices`, `tet_indices`) 가 `builder.add_soft_mesh` 로 추가됩니다. `attach.vertex_indices` 의 파티클은 `model.particle_mass=0` 으로 핀 되고, 매 substep `update_attach_particles` warp kernel 이 핀 파티클의 `particle_q`/`particle_qd` 를 attach link 의 transform 으로 덮어씁니다 (Newton 1.1.0 에는 native particle↔body constraint 가 없어 이 패턴이 유일한 결합 방법).
 
-현재 PR2 시점에서는 **build path + attach metadata 까지만** 동작합니다. 매 substep 에서 핀 파티클을 link transform 으로 따라가게 하는 warp kernel 과 hybrid step 순서 (`rigid.step → attach kernel → soft.step`) 는 PR3 에서 추가됩니다. 그때까지 softbodies 가 있어도 step kernel 은 rigid-only.
+**Hybrid step 순서 (per substep, `_step_kernels_hybrid`):**
+
+1. `model.collide(state_0, contacts)` — rigid contacts
+2. rigid solver 를 kinematic 통합기로 강등: `particle_count=0`, `gravity=zero`, `shape_contact_pair_count=0`
+3. `solver.step(state_0 → state_1)` — body_q/body_qd 만 갱신
+4. 모델 필드 복원, `state_1.particle_f.zero_()`
+5. `wp.launch(update_attach_particles, ...)` — 핀 파티클을 새 body transform 에 박음
+6. `collision_pipeline.collide(state_1, soft_contacts)`
+7. `soft_solver.step(state_1 → state_0)` — VBD 가 나머지 파티클 적분
+8. `state_0, state_1 = state_1, state_0`
+
+`rebuild_bvh` 는 substep 루프 *밖*에서 한 번만 호출. 비-softbody pack 은 기존 rigid-only 경로 (`_step_kernels_rigid`) 가 그대로 — softbody 추가가 기존 동작을 깨지 않습니다.
+
+**`.npz` 스키마:** `vertices` (N×3 float32), `tet_indices` (T×4 int32) **만** 필요. 모든 attach/material/contact 정보는 `softbodies:` 블록에 둡니다.
+
+**제약 (Newton 1.1.0):**
+- `contact.{ke,kd,mu}` 는 글로벌 — 여러 spec 이 있으면 **마지막 spec 이 winner**.
+- `attach.vertex_indices` 는 명시적으로 나열해야 합니다 (axis/threshold 자동 선택 없음).
+- 파티클이 있는 pack 에서는 `SolverVBD` 가 요구해서 finalize 직전 `builder.color()` 가 자동 호출됩니다.
 
 ---
 
