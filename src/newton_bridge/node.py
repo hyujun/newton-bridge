@@ -244,13 +244,26 @@ class SimBridgeNode(Node):
         if self.snapshot is None:
             return
         now = time.monotonic()
-        telemetry_dict = self.telemetry.snapshot(now, self.world.sim_time).as_dict()
+        t0 = time.perf_counter()
+        # Cached at 1Hz: telemetry.snapshot() re-aggregates every RateMeter and
+        # PhaseTimer, which is ~0.2ms of pure CPU work. The viewer-facing
+        # payload only needs to be roughly current, so we serve a stale-but-
+        # safe view here and let the 1Hz status / diagnostic paths call the
+        # uncached `snapshot()` for fresh data.
+        telemetry_dict = self.telemetry.snapshot_dict_cached(
+            now, self.world.sim_time
+        )
+        t1 = time.perf_counter()
         self.snapshot.publish(
             self.world.state_0,
             sim_time=self.world.sim_time,
             telemetry=telemetry_dict,
             now=now,
         )
+        t2 = time.perf_counter()
+        now_mono = time.monotonic()
+        self.telemetry.note_phase("snap_telemetry", t1 - t0, now_mono)
+        self.telemetry.note_phase("snap_publish", t2 - t1, now_mono)
 
     def _apply_latest_cmd(self) -> None:
         names = self._latest_cmd["names"]
@@ -285,9 +298,20 @@ class SimBridgeNode(Node):
     def _publish_state(self) -> None:
         now_wall = time.monotonic()
 
+        # Diagnostic: split "wait for queued GPU step work" from "actual DtoH
+        # readback cost". Without this, the first .numpy() call below absorbs
+        # both, making it impossible to tell whether publish is slow because
+        # of readback overhead or because step compute hasn't finished yet.
+        t_sync0 = time.perf_counter()
+        self.world.sync_device()
+        t_sync1 = time.perf_counter()
+
+        # Sub-phase timing for publish_state.
+        t_a = time.perf_counter()
         q = self.world.read_joint_positions()
         qd = self.world.read_joint_velocities()
         eff = self.world.read_joint_efforts()
+        t_b = time.perf_counter()
         now_stamp = self.get_clock().now().to_msg()
         msg = JointState()
         msg.header.stamp = now_stamp
@@ -298,8 +322,18 @@ class SimBridgeNode(Node):
         self.pub_state.publish(msg)
         self.telemetry.note_pub(now_wall)
         self._publish_clock()
+        t_c = time.perf_counter()
         self._publish_tf(now_stamp)
+        t_d = time.perf_counter()
         self._publish_sensors(now_stamp)
+        t_e = time.perf_counter()
+
+        now_mono = time.monotonic()
+        self.telemetry.note_phase("gpu_sync", t_sync1 - t_sync0, now_mono)
+        self.telemetry.note_phase("pub_readback", t_b - t_a, now_mono)
+        self.telemetry.note_phase("pub_jointstate", t_c - t_b, now_mono)
+        self.telemetry.note_phase("pub_tf", t_d - t_c, now_mono)
+        self.telemetry.note_phase("pub_sensors", t_e - t_d, now_mono)
 
     def _publish_tf(self, stamp) -> None:
         if not self._publish_tf_enabled:

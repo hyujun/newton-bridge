@@ -322,6 +322,16 @@ class NewtonWorld:
         self.control.joint_f.assign(self._control_effort_host)
 
     # ----------------------------------------------------------------------
+    def sync_device(self) -> None:
+        """Block until all queued GPU work on the simulation device is done.
+
+        Diagnostic helper: when the physics step is captured into a CUDA graph,
+        `step()` returns immediately and the actual compute completes async.
+        Calling this before any readback isolates "wait for step compute" cost
+        from the readback (DtoH copy) cost itself.
+        """
+        wp.synchronize_device(self.device)
+
     def read_joint_positions(self) -> dict[str, float]:
         q = self.view.get_dof_positions(self.state_0).numpy().reshape(-1)
         return {n: float(q[self._dof_index[n]]) for n in self.exposed_joint_names}

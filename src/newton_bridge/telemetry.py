@@ -201,6 +201,16 @@ class TelemetryRegistry:
         # true we record the time so we can wait >1s before flipping to STALL.
         self._sync_stall_started: float | None = None
 
+        # Cached snapshot for hot-path callers (see snapshot_cached). The
+        # snapshot itself does Hz/phase aggregations across all RateMeters and
+        # PhaseTimers; recomputing it every physics tick is wasted work since
+        # the values it summarizes only change meaningfully on a 1Hz scale.
+        # `_cached_dict` is also stashed so as_dict() doesn't have to re-flatten
+        # phases on every cache hit — sim_time is patched into both on hit.
+        self._cached_snap: TelemetrySnapshot | None = None
+        self._cached_dict: dict[str, Any] | None = None
+        self._cached_snap_at: float = 0.0
+
     # --- producer-side ticks --------------------------------------------------
 
     def note_step(self, now: float) -> None:
@@ -267,6 +277,45 @@ class TelemetryRegistry:
             self._sync_stall_started = None
 
         return STATE_RUNNING
+
+    def snapshot_cached(
+        self, now: float, sim_time: float, *, max_age_s: float = 1.0
+    ) -> TelemetrySnapshot:
+        """Like snapshot(), but reuse the previous result if it's fresh enough.
+
+        Hot-path producers (per-physics-step) call this to avoid re-aggregating
+        Hz/phase stats every tick. The returned object's `sim_time` is updated
+        to the current value even on cache hits so consumers that only care
+        about the latest sim_time still see live data; the rate/phase fields
+        update at most every `max_age_s`.
+        """
+        cached = self._cached_snap
+        if cached is not None and (now - self._cached_snap_at) < max_age_s:
+            cached.sim_time = float(sim_time)
+            return cached
+        snap = self.snapshot(now, sim_time)
+        self._cached_snap = snap
+        self._cached_dict = None  # invalidate downstream dict cache
+        self._cached_snap_at = now
+        return snap
+
+    def snapshot_dict_cached(
+        self, now: float, sim_time: float, *, max_age_s: float = 1.0
+    ) -> dict[str, Any]:
+        """Cached `snapshot(...).as_dict()` for hot-path callers.
+
+        Returns the same dict object across cache hits with `sim_time` updated
+        in-place — caller must not mutate other keys. Saves both the snapshot
+        re-aggregation and the as_dict() flatten step (~0.2ms combined).
+        """
+        snap = self.snapshot_cached(now, sim_time, max_age_s=max_age_s)
+        d = self._cached_dict
+        if d is None:
+            d = snap.as_dict()
+            self._cached_dict = d
+        else:
+            d["sim_time"] = float(sim_time)
+        return d
 
     def snapshot(self, now: float, sim_time: float) -> TelemetrySnapshot:
         step_hz = self.step.rate(now)

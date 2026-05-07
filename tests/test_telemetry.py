@@ -379,3 +379,66 @@ def test_format_status_omits_phase_line_when_no_phases() -> None:
     s = format_status(snap)
     assert "phases:" not in s
     assert "\n" not in s
+
+
+# ---------- snapshot caching ----------------------------------------------
+
+
+def test_snapshot_cached_returns_same_object_within_window() -> None:
+    """Hot-path callers reuse the cached snapshot until max_age_s elapses."""
+    r = _reg()
+    r.note_step(now=0.0)
+    r.note_phase("step", 0.001, now=0.0)
+    s1 = r.snapshot_cached(now=0.0, sim_time=0.0)
+    s2 = r.snapshot_cached(now=0.5, sim_time=0.5)
+    assert s2 is s1  # identity, not just equality
+
+
+def test_snapshot_cached_updates_sim_time_on_hit() -> None:
+    r = _reg()
+    r.note_step(now=0.0)
+    s1 = r.snapshot_cached(now=0.0, sim_time=10.0)
+    s2 = r.snapshot_cached(now=0.5, sim_time=20.0)
+    assert s2 is s1
+    assert s1.sim_time == 20.0
+
+
+def test_snapshot_cached_recomputes_after_window() -> None:
+    r = _reg()
+    r.note_step(now=0.0)
+    r.note_phase("step", 0.001, now=0.0)
+    s1 = r.snapshot_cached(now=0.0, sim_time=0.0, max_age_s=1.0)
+    # New tick lands; rate should update on the next miss.
+    for i in range(100):
+        r.note_step(now=0.5 + i * 0.001)
+    s2 = r.snapshot_cached(now=1.5, sim_time=1.5, max_age_s=1.0)
+    assert s2 is not s1
+    assert s2.step_hz != s1.step_hz
+
+
+def test_snapshot_dict_cached_returns_same_dict_on_hit() -> None:
+    r = _reg()
+    r.note_step(now=0.0)
+    r.note_phase("step", 0.001, now=0.0)
+    d1 = r.snapshot_dict_cached(now=0.0, sim_time=0.0)
+    d2 = r.snapshot_dict_cached(now=0.3, sim_time=0.3)
+    assert d2 is d1
+    # sim_time mutates on hit so callers get a roughly-current value.
+    assert d2["sim_time"] == 0.3
+
+
+def test_snapshot_dict_cached_recomputes_after_window() -> None:
+    r = _reg()
+    r.note_step(now=0.0)
+    d1 = r.snapshot_dict_cached(now=0.0, sim_time=0.0, max_age_s=1.0)
+    d2 = r.snapshot_dict_cached(now=2.0, sim_time=2.0, max_age_s=1.0)
+    assert d2 is not d1
+
+
+def test_uncached_snapshot_still_works() -> None:
+    """The 1Hz status / diagnostic paths should keep getting fresh data."""
+    r = _reg()
+    r.note_step(now=0.0)
+    r.snapshot_cached(now=0.0, sim_time=0.0)
+    fresh = r.snapshot(now=0.1, sim_time=99.0)
+    assert fresh.sim_time == 99.0
