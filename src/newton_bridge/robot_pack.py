@@ -66,6 +66,9 @@ def _promote_robot_yaml(cfg: dict, pack_dir: Path) -> dict:
         "home_pose": dict(cfg.get("home_pose", {}) or {}),
         "drive": dict(cfg.get("drive", {}) or {}),
         "joints": dict(cfg.get("joints", {}) or {}),
+        # Softbodies are optional. Carried through verbatim; parsed by
+        # newton_bridge.softbody.parse_softbodies at world-build time.
+        "softbodies": list(cfg.get("softbodies", []) or []),
     }
 
     scene: dict[str, Any] = {
@@ -140,6 +143,7 @@ def _flatten_primary_aliases(scene: dict) -> None:
     scene["home_pose"] = dict(primary.get("home_pose", {}) or {})
     scene["drive"] = dict(primary.get("drive", {}) or {})
     scene["joints"] = dict(primary.get("joints", {}) or {})
+    scene["softbodies"] = list(primary.get("softbodies", []) or [])
 
 
 def load_pack(pack_dir: Path) -> dict:
