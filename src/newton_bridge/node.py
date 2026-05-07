@@ -13,7 +13,8 @@ Topics (standard types, stable contract):
                                                     step.
 
 Services:
-    /sim/reset  std_srvs/Trigger   restore pack.home_pose, publish state
+    /sim/reset            std_srvs/Trigger   restore pack.home_pose, publish state
+    /sim/set_publish_tf   std_srvs/SetBool   toggle /tf publishing at runtime
 
 Threading:
     Physics + ROS callbacks run on the main thread. Rendering runs on the
@@ -32,7 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState, Imu
 from rosgraph_msgs.msg import Clock
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 from geometry_msgs.msg import TransformStamped, Vector3, WrenchStamped
 from tf2_msgs.msg import TFMessage
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -122,11 +123,10 @@ class SimBridgeNode(Node):
         self.sub_gravity = self.create_subscription(
             Vector3, "/sim/set_gravity", self._on_set_gravity, qos
         )
-        self.pub_tf = (
-            self.create_publisher(TFMessage, "/tf", qos)
-            if self._publish_tf_enabled
-            else None
-        )
+        # /tf publisher is always created so the topic is discoverable; the
+        # actual emit is gated by `_publish_tf_enabled` so the runtime toggle
+        # service can flip without rebuilding QoS/discovery state.
+        self.pub_tf = self.create_publisher(TFMessage, "/tf", qos)
 
         self.sensors: SensorBundle = build_sensors(self.pack, world.model)
         self._contact_pubs = {
@@ -144,6 +144,9 @@ class SimBridgeNode(Node):
             )
 
         self.srv_reset = self.create_service(Trigger, "/sim/reset", self._on_reset)
+        self.srv_set_publish_tf = self.create_service(
+            SetBool, "/sim/set_publish_tf", self._on_set_publish_tf
+        )
 
         viewer_hz = sim_cfg.get("viewer_hz", 60)
         render_note = (
@@ -191,6 +194,17 @@ class SimBridgeNode(Node):
         self._do_reset()
         response.success = True
         response.message = "reset to home_pose"
+        return response
+
+    def _on_set_publish_tf(self, request, response):
+        prev = self._publish_tf_enabled
+        self._publish_tf_enabled = bool(request.data)
+        if prev != self._publish_tf_enabled:
+            self.get_logger().info(
+                f"/tf publishing {'ON' if self._publish_tf_enabled else 'OFF'}"
+            )
+        response.success = True
+        response.message = "on" if self._publish_tf_enabled else "off"
         return response
 
     def _do_reset(self) -> None:
@@ -288,7 +302,7 @@ class SimBridgeNode(Node):
         self._publish_sensors(now_stamp)
 
     def _publish_tf(self, stamp) -> None:
-        if self.pub_tf is None:
+        if not self._publish_tf_enabled:
             return
         poses = self.world.read_body_transforms()
         if self._publish_frames:

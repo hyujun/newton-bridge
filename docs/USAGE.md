@@ -242,6 +242,22 @@ ros:
   publish_frames: [tool0, wrist_3_link]   # 이 두 개만
 ```
 
+**런타임에 끄고 켜기** — 시뮬 재시작 없이 토글 가능:
+
+```bash
+ros2 service call /sim/set_publish_tf std_srvs/srv/SetBool "{data: false}"  # OFF
+ros2 service call /sim/set_publish_tf std_srvs/srv/SetBool "{data: true}"   # ON
+```
+
+또는 시작 시점에 override:
+
+```bash
+python -m newton_bridge --no-publish-tf            # CLI
+NEWTON_BRIDGE_PUBLISH_TF=0 ./scripts/host/run.sh   # env var
+```
+
+자세한 우선순위/동작은 [CONFIGURATION.md §/tf 설정](CONFIGURATION.md#tf-설정) 참조.
+
 RViz2 와 연동 (호스트):
 
 ```bash

@@ -44,3 +44,6 @@ drive:
 ros:
   joint_states_topic:   /joint_states
   joint_command_topic:  /joint_command
+  publish_tf:           true
+  tf_root_frame:        world
+  publish_frames:       []

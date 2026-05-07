@@ -271,6 +271,7 @@ Per-joint `joints.<name>.drive.mode` 로 섞을 수 있음. 메시지에 세 필
 | Service | Type | Semantics |
 |---|---|---|
 | `/sim/reset` | `std_srvs/Trigger` | restore `home_pose`, zero velocities, publish state. 두 모드 모두 available |
+| `/sim/set_publish_tf` | `std_srvs/SetBool` | `/tf` 퍼블리싱 런타임 on/off. publisher 자체는 항상 살아 있고 emit 만 게이트 — QoS/discovery 영향 없음 |
 
 `/sim/step` 은 제거되었습니다 — sync 모드에서 step 트리거 역할을 `/joint_command` publish 가 대신합니다.
 
@@ -395,11 +396,25 @@ Viewer 가 별도 thread 에서 도는 환경에서 "viewer 가 그려지고 있
 
 ## /tf 설정
 
-`ros.publish_tf` 를 `false` 로 하면 `/tf` 퍼블리셔 자체가 생성되지 않음 (CPU 절감).
+`/tf` 퍼블리싱은 **3가지 레이어**로 토글 가능. 우선순위 (높음 → 낮음):
+
+1. **런타임 서비스** `/sim/set_publish_tf` (`std_srvs/SetBool`) — 시뮬 실행 중 on/off
+   ```bash
+   ros2 service call /sim/set_publish_tf std_srvs/srv/SetBool "{data: false}"  # OFF
+   ros2 service call /sim/set_publish_tf std_srvs/srv/SetBool "{data: true}"   # ON
+   ```
+2. **CLI 플래그** `--publish-tf` / `--no-publish-tf` — 시작 시점 override
+   ```bash
+   python -m newton_bridge --no-publish-tf
+   ```
+3. **환경 변수** `NEWTON_BRIDGE_PUBLISH_TF=0` (또는 `1/true/false/on/off`)
+4. **`ros.publish_tf`** (yaml, 기본 `true`)
+
+publisher 객체는 항상 생성되어 토픽이 `ros2 topic list` 에 항상 보임 — 토글은 emit-side gate 라 QoS/discovery 매칭이 흔들리지 않음. 끄면 `/tf` 페이로드 작성과 publish 호출 자체를 skip 하므로 CPU 절감 효과는 그대로.
 
 `ros.publish_frames`:
 - `[]` (기본) — 루트(`tf_root_frame`) 를 제외한 **모든** body 퍼블리시
-- `["tool0", "wrist_3_link"]` — whitelist
+- `["tool0", "wrist_3_link"]` — whitelist (런타임 변경은 미지원, yaml only)
 
 Newton 은 world-frame pose 만 제공하므로 현재 구현은 평탄한 `world → each-body` 구조. `robot_state_publisher` 호환 parent→child 체인은 URDF 재파싱 필요 (별도 phase).
 

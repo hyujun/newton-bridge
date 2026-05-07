@@ -39,3 +39,7 @@ drive:
 ros:
   joint_states_topic:   /joint_states
   joint_command_topic:  /joint_command
+  publish_tf:           false       # /tf on/off. CLI --no-publish-tf 또는
+                                   # /sim/set_publish_tf 서비스로 런타임 토글 가능
+  tf_root_frame:        world
+  publish_frames:       []

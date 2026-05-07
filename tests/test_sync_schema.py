@@ -23,6 +23,19 @@ def test_defaults_injected(name: str) -> None:
     assert cfg["ros"]["sync_timeout_ms"] == 100
 
 
+@pytest.mark.parametrize("name", ["ur5e", "franka", "kuka_iiwa_14"])
+def test_publish_tf_key_present(name: str) -> None:
+    """All shipped packs declare the /tf toggle keys so users can discover them.
+
+    The boolean default ships per-pack (true or false) — we only assert the
+    keys exist and have the right shape, not their value.
+    """
+    cfg = load_pack(ROBOTS / name)
+    assert isinstance(cfg["ros"]["publish_tf"], bool)
+    assert isinstance(cfg["ros"]["tf_root_frame"], str)
+    assert isinstance(cfg["ros"]["publish_frames"], list)
+
+
 def test_explicit_values_preserved(tmp_path: Path) -> None:
     pack = tmp_path / "custom"
     (pack / "models").mkdir(parents=True)
