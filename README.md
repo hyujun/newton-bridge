@@ -11,14 +11,17 @@
 │                                                      │
 │   Custom controller  ─ pub /joint_command            │
 │                      ─ sub /joint_states (use_sim_time)
-│                      ─ call /sim/reset  (optional)    │
+│                      ─ sub /tf (toggleable)          │
+│                      ─ call /sim/reset / set_publish_tf (optional)
+│                      ─ pub /sim/set_gravity (optional)│
 │                             │                        │
 │   ┌─────────────────────────┴──────────────────────┐ │
 │   │ Container: newton-bridge                        │ │
 │   │   python -m newton_bridge                       │ │
 │   │     ├─ Newton: ModelBuilder + solver step       │ │
 │   │     └─ rclpy: /clock, /joint_states/command,    │ │
-│   │                /sim/reset                        │ │
+│   │                /tf, /sim/{reset,set_publish_tf, │ │
+│   │                set_gravity, diagnostics}        │ │
 │   └─────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
