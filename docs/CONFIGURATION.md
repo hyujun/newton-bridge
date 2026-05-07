@@ -144,6 +144,25 @@ worlds:
             friction: 0.1            # Coulomb 마찰
             limit_ke: 10000.0        # joint limit penalty Kp
             limit_kd: 100.0          # joint limit penalty Kd
+        softbodies:                  # optional, per-articulation (in progress)
+          - name: left_fingertip_pad
+            asset_rel: softbody/pad.npz   # pack-relative .npz (vertices + tet_indices)
+            pos: [0.0, 0.0, 0.0]          # 월드 spawn 위치 (default 원점)
+            rot: [0.0, 0.0, 0.0, 1.0]     # quaternion xyzw, default identity
+            scale: 1.0
+            material:
+              density: 100.0
+              k_mu:     1.0e6             # FEM shear modulus
+              k_lambda: 1.0e6             # FEM Lamé λ
+              k_damp:   1.0e-6
+            particle_radius: 0.003        # optional
+            attach:                       # required — 파티클을 link 에 핀
+              body: left_fingertip        # URDF/MJCF link name
+              vertex_indices: [0, 1, 2]   # mesh vertex 인덱스 (mass=0 으로 고정)
+            contact:                      # optional, 마지막 spec 이 winner (Newton 1.1.0 글로벌)
+              ke: 2.0e6
+              kd: 1.0e-7
+              mu: 0.5
 
 sensors:                             # optional
   contact:
@@ -207,6 +226,8 @@ joints:                              # per-joint override (optional)
 
 articulation_pattern: "*"            # optional, default "*"
 
+softbodies: []                       # optional, scene.yaml 의 articulation.softbodies 와 동일 스키마
+
 ros:
   joint_states_topic:  /joint_states
   joint_command_topic: /joint_command
@@ -214,10 +235,16 @@ ros:
 
 승격 규칙 ([`_promote_robot_yaml`](../src/newton_bridge/robot_pack.py#L51)):
 - `robot.base_position` → articulation `xform.pos`
-- `joint_names`/`home_pose`/`drive`/`joints`/`articulation_pattern` → 단일 articulation 에 그대로
+- `joint_names`/`home_pose`/`drive`/`joints`/`articulation_pattern`/`softbodies` → 단일 articulation 에 그대로
 - `sim.gravity` → world gravity
 - `sensors:` 있으면 scene 로 carry-through
 - `ros.primary_articulation` 기본값 = `<pack_dir 이름>` (예: `ur5e`)
+
+### Softbody 모드 (in progress)
+
+`softbodies:` 가 비어있지 않으면 NewtonWorld 가 hybrid 모드로 빌드됩니다 — rigid solver (`sim.solver`) 옆에 별도 `SolverVBD` 와 `CollisionPipeline` 이 함께 생성되고, 각 spec 의 `.npz` (`vertices`, `tet_indices`) 가 `builder.add_soft_mesh` 로 추가됩니다. `attach.vertex_indices` 의 파티클은 `model.particle_mass=0` 으로 핀 됩니다.
+
+현재 PR2 시점에서는 **build path + attach metadata 까지만** 동작합니다. 매 substep 에서 핀 파티클을 link transform 으로 따라가게 하는 warp kernel 과 hybrid step 순서 (`rigid.step → attach kernel → soft.step`) 는 PR3 에서 추가됩니다. 그때까지 softbodies 가 있어도 step kernel 은 rigid-only.
 
 ---
 

@@ -80,6 +80,8 @@ python3 examples/controller_demo.py --mode freerun --robot ur5e
 
 새 로봇 추가 (외부 폴더 / URDF / xacro / MJCF) 절차는 [docs/ROBOTS.md](docs/ROBOTS.md).
 
+> **Softbody fingertip pads (in progress)**: pack 의 articulation 에 `softbodies:` 블록을 두면 `.npz` (`vertices` + `tet_indices`) 를 link 에 핀 해서 hybrid 모드 (rigid + `SolverVBD`) 로 빌드됩니다. PR2 (현재 브랜치) 까지는 build path + attach metadata 만 — 매 substep 따라가는 warp kernel 은 PR3. 스키마는 [docs/CONFIGURATION.md](docs/CONFIGURATION.md#softbody-모드-in-progress).
+
 ## Sync modes
 
 | `SYNC_MODE=` | 동작 | 용도 |

@@ -138,6 +138,8 @@ ros:
 
 에셋(URDF/MJCF/STL)은 gitignore. `scripts/host/fetch_assets.sh` 가 외부에서 끌어옴. 새 pack 을 추가하거나 외부 `*_description` 패키지(URDF/xacro/MJCF)를 붙이는 절차는 [ROBOTS.md](ROBOTS.md) 참조.
 
+선택적으로 `softbodies:` 블록을 articulation 안에 두면 hybrid 모드 (rigid solver + `SolverVBD` + `CollisionPipeline`) 로 빌드됩니다. 각 spec 의 `.npz` (`vertices` + `tet_indices`) 가 같은 `ModelBuilder.add_soft_mesh` 로 추가되고, `attach.vertex_indices` 파티클은 `particle_mass=0` 으로 핀 — 매 substep 에서 link transform 을 따라가게 하는 warp kernel 은 PR3 에서 추가 예정. 스키마는 [CONFIGURATION.md](CONFIGURATION.md#softbody-모드-in-progress).
+
 ## 왜 이 설계인가
 
 - **단일 프로세스**: Newton Warp kernel 과 rclpy callback 이 같은 GIL 아래 있으므로 shared-memory 로 state 접근 — 별도 IPC 계층 없음.

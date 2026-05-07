@@ -15,6 +15,8 @@ import warp as wp
 import newton
 from newton.selection import ArticulationView
 
+from .softbody import SoftbodySpec, load_softbody_npz, parse_softbodies
+
 
 # JointTargetMode name (yaml) -> enum. Accepted on pack['drive.mode'] and
 # pack['joints.<name>.drive.mode']. Case-insensitive at parse time.
@@ -45,6 +47,13 @@ class NewtonWorld:
         self.device = device
         self.physics_dt: float = 1.0 / float(pack["sim"]["physics_hz"])
         self.substeps: int = int(pack["sim"].get("substeps", 1))
+
+        # Parsed once up-front so _build_model/_build_solver can branch on
+        # `self.softbodies` without re-walking the yaml. Empty list when the
+        # pack has no `softbodies:` block.
+        self.softbodies: list[SoftbodySpec] = parse_softbodies(
+            pack, Path(pack["_pack_dir"])
+        )
 
         self._build_model()
         self._build_solver()
@@ -131,10 +140,21 @@ class NewtonWorld:
         # Newton 1.1.0 testing (the solver captures these at finalize time).
         self._configure_builder_drive(builder)
 
+        # Softbody assets are added to the same builder before finalize.
+        # `_build_softbodies` records per-spec (start_vertex, vertex_count)
+        # plus the resolved attach (body_index, local_offset) tuples that
+        # the post-finalize step needs to pin particle_mass.
+        self._build_softbodies(builder)
+
         self.model = builder.finalize(device=self.device)
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
+
+        # Pin attach particles by zeroing their mass — Newton 1.1.0's only
+        # kinematic-particle hook. The actual per-step transform overwrite
+        # lands in PR 3 (`update_attach_particles` warp kernel).
+        self._finalize_softbody_attach()
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _dof_names_from_builder(self, builder) -> list[str]:
@@ -225,6 +245,205 @@ class NewtonWorld:
                 builder.joint_target_pos[i] = val_f
 
     # -- NEWTON API SURFACE -------------------------------------------------
+    def _build_softbodies(self, builder) -> None:
+        """Add each `softbodies:` entry to `builder` before finalize.
+
+        Per-spec we record:
+            (start_vertex, vertex_count)        # offset into model.particle_q
+            attach.body_index                   # index into model.body_q
+            attach.local_offset (3,) float32    # body-frame pin location
+
+        The body index is resolved against the builder's pre-finalize body
+        label list (NOT the post-finalize ArticulationView, which doesn't
+        exist yet at this stage). Local offsets are computed from the
+        builder's initial body transform: local = R0^T · (vertex_world - p0).
+
+        Vertex_world is the npz vertex with the spec's xform applied — i.e.
+        the position the particle will sit at right after finalize, which
+        keeps the attach-kernel offset consistent with the actual particle
+        spawn position.
+        """
+        if not self.softbodies:
+            self._softbody_layout = []
+            self._softbody_attach_meta = []
+            return
+
+        body_labels = self._builder_body_labels(builder)
+        layout: list[tuple[int, int]] = []
+        attach_meta: list[dict] = []
+
+        for spec in self.softbodies:
+            arrays = load_softbody_npz(spec.asset_path)
+
+            # particle_q starts at the current vertex count — this is the
+            # offset newton.ModelBuilder appends new soft-mesh particles at.
+            start = int(builder.particle_count)
+            mesh = newton.TetMesh(
+                arrays.vertices,
+                arrays.tet_indices,
+                k_mu=spec.material.k_mu,
+                k_lambda=spec.material.k_lambda,
+                k_damp=spec.material.k_damp,
+                density=spec.material.density,
+            )
+            kwargs = dict(
+                pos=list(spec.pos),
+                rot=list(spec.rot),
+                scale=spec.scale,
+                vel=(0.0, 0.0, 0.0),
+                density=spec.material.density,
+                k_mu=spec.material.k_mu,
+                k_lambda=spec.material.k_lambda,
+                k_damp=spec.material.k_damp,
+            )
+            if spec.particle_radius is not None:
+                kwargs["particle_radius"] = spec.particle_radius
+            builder.add_soft_mesh(mesh=mesh, **kwargs)
+            count = int(builder.particle_count) - start
+            if count <= 0:
+                raise RuntimeError(
+                    f"softbody {spec.name!r}: builder.add_soft_mesh added "
+                    f"{count} particles (expected > 0)"
+                )
+            layout.append((start, count))
+
+            # Resolve the URDF/MJCF link name to a body index.
+            try:
+                body_index = body_labels.index(spec.attach.body)
+            except ValueError:
+                # Allow short-name match (`tool0` matching `arm/tool0`) since
+                # importers commonly prepend the articulation prefix.
+                shorts = [b.rsplit("/", 1)[-1] for b in body_labels]
+                if spec.attach.body in shorts:
+                    body_index = shorts.index(spec.attach.body)
+                else:
+                    raise ValueError(
+                        f"softbody {spec.name!r}: attach.body={spec.attach.body!r} "
+                        f"not found among bodies: {body_labels}"
+                    ) from None
+
+            # Body initial transform from the builder. body_q is laid out as
+            # [px, py, pz, qx, qy, qz, qw] per body (Newton convention).
+            bq = np.asarray(builder.body_q, dtype=np.float32)
+            if bq.ndim == 1:
+                bq = bq.reshape(-1, 7)
+            p0 = bq[body_index, 0:3].astype(np.float32)
+            q0 = bq[body_index, 3:7].astype(np.float32)  # xyzw
+
+            # Particle world spawn = npz vertex * scale, rotated by spec.rot,
+            # then translated by spec.pos. We mirror that math here so the
+            # local offset we hand PR 3 lines up exactly with the particle
+            # the kernel will overwrite.
+            spec_R = self._quat_to_matrix(np.asarray(spec.rot, dtype=np.float32))
+            spec_p = np.asarray(spec.pos, dtype=np.float32)
+
+            local_offsets = []
+            for vi in spec.attach.vertex_indices:
+                if vi >= arrays.vertex_count:
+                    raise ValueError(
+                        f"softbody {spec.name!r}: attach.vertex_indices contains "
+                        f"{vi} but mesh only has {arrays.vertex_count} vertices"
+                    )
+                v = arrays.vertices[vi].astype(np.float32) * float(spec.scale)
+                world = spec_R @ v + spec_p
+                # local = R0^T · (world - p0)
+                R0 = self._quat_to_matrix(q0)
+                local = R0.T @ (world - p0)
+                local_offsets.append(local)
+
+            attach_meta.append(
+                {
+                    "spec_name": spec.name,
+                    "body_index": int(body_index),
+                    "particle_indices": np.asarray(
+                        [start + int(vi) for vi in spec.attach.vertex_indices],
+                        dtype=np.int32,
+                    ),
+                    "local_offsets": np.asarray(local_offsets, dtype=np.float32),
+                }
+            )
+
+        self._softbody_layout = layout
+        self._softbody_attach_meta = attach_meta
+
+    @staticmethod
+    def _builder_body_labels(builder) -> list[str]:
+        # Newton's ModelBuilder exposes body labels as either `body_key`
+        # (newer builds) or `body_label` (older). Try both, then fall back
+        # to bare indices so a missing list still yields a useful error.
+        for attr in ("body_key", "body_label"):
+            v = getattr(builder, attr, None)
+            if v:
+                return list(v)
+        return [f"body_{i}" for i in range(int(getattr(builder, "body_count", 0)))]
+
+    @staticmethod
+    def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
+        """xyzw quaternion → 3x3 rotation. Local copy avoids a scipy dep."""
+        x, y, z, w = (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+        n = x * x + y * y + z * z + w * w
+        if n <= 0.0:
+            return np.eye(3, dtype=np.float32)
+        s = 2.0 / n
+        xx, yy, zz = x * x * s, y * y * s, z * z * s
+        xy, xz, yz = x * y * s, x * z * s, y * z * s
+        wx, wy, wz = w * x * s, w * y * s, w * z * s
+        return np.asarray(
+            [
+                [1.0 - (yy + zz), xy - wz, xz + wy],
+                [xy + wz, 1.0 - (xx + zz), yz - wx],
+                [xz - wy, yz + wx, 1.0 - (xx + yy)],
+            ],
+            dtype=np.float32,
+        )
+
+    def _finalize_softbody_attach(self) -> None:
+        """Pin attach particles by zeroing their mass; cache wp.array views.
+
+        Runs immediately after `builder.finalize`. `model.particle_mass` is
+        a wp.array on the simulation device; we read it back, zero the
+        attach indices, and write it back. We also stash device-side wp
+        arrays for `attach_particle_idx`, `attach_body_idx`, and
+        `attach_local_pos`, which PR 3's warp kernel will consume.
+        """
+        if not self._softbody_attach_meta:
+            self.attach_particle_idx = None
+            self.attach_body_idx = None
+            self.attach_local_pos = None
+            return
+
+        all_particle_idx = np.concatenate(
+            [m["particle_indices"] for m in self._softbody_attach_meta]
+        ).astype(np.int32)
+        all_local_pos = np.concatenate(
+            [m["local_offsets"] for m in self._softbody_attach_meta], axis=0
+        ).astype(np.float32)
+        all_body_idx = np.concatenate(
+            [
+                np.full(
+                    len(m["particle_indices"]), m["body_index"], dtype=np.int32
+                )
+                for m in self._softbody_attach_meta
+            ]
+        )
+
+        # Zero particle_mass at the attach indices (kinematic pinning).
+        pmass_host = self.model.particle_mass.numpy().copy()
+        pmass_host[all_particle_idx] = 0.0
+        self.model.particle_mass.assign(pmass_host)
+
+        self.attach_particle_idx = wp.array(
+            all_particle_idx, dtype=wp.int32, device=self.device
+        )
+        self.attach_body_idx = wp.array(
+            all_body_idx, dtype=wp.int32, device=self.device
+        )
+        # vec3 layout for the warp kernel consumer in PR 3.
+        self.attach_local_pos = wp.array(
+            all_local_pos, dtype=wp.vec3, device=self.device
+        )
+
+    # -- NEWTON API SURFACE -------------------------------------------------
     def _build_solver(self) -> None:
         sim_cfg = self.pack["sim"]
         solver_name = sim_cfg.get("solver", "xpbd").lower()
@@ -250,6 +469,50 @@ class NewtonWorld:
             raise ValueError(
                 f"solver {solver_name!r} rejected solver_params={kwargs!r}: {exc}"
             ) from None
+
+        # Hybrid mode: when softbodies are present, a separate VBD solver
+        # owns the soft particles and a CollisionPipeline produces soft
+        # contacts. Step kernels still run rigid-only in PR 2; PR 3 wires
+        # the franka-pattern co-step.
+        if self.softbodies:
+            self._build_soft_solver()
+        else:
+            self.soft_solver = None
+            self.collision_pipeline = None
+
+    # -- NEWTON API SURFACE -------------------------------------------------
+    def _build_soft_solver(self) -> None:
+        sim_cfg = self.pack["sim"]
+        soft_cfg = dict(sim_cfg.get("soft_solver_params", {}) or {})
+        soft_cfg.setdefault("integrate_with_external_rigid_solver", True)
+
+        try:
+            self.soft_solver = newton.solvers.SolverVBD(self.model, **soft_cfg)
+        except TypeError as exc:
+            raise ValueError(
+                f"SolverVBD rejected soft_solver_params={soft_cfg!r}: {exc}"
+            ) from None
+
+        pipeline_cfg = dict(sim_cfg.get("collision_pipeline_params", {}) or {})
+        try:
+            self.collision_pipeline = newton.CollisionPipeline(
+                self.model, **pipeline_cfg
+            )
+        except TypeError as exc:
+            raise ValueError(
+                f"CollisionPipeline rejected params={pipeline_cfg!r}: {exc}"
+            ) from None
+
+        # Per-spec contact override: write soft_contact_ke/kd/mu on the model
+        # if the spec sets them. Newton applies these globally (no per-mesh
+        # override in 1.1.0) — last spec wins. Documented in the YAML schema.
+        for spec in self.softbodies:
+            if spec.contact.ke is not None:
+                self.model.soft_contact_ke = float(spec.contact.ke)
+            if spec.contact.kd is not None:
+                self.model.soft_contact_kd = float(spec.contact.kd)
+            if spec.contact.mu is not None:
+                self.model.soft_contact_mu = float(spec.contact.mu)
 
     def set_gravity(self, gravity: tuple[float, float, float]) -> None:
         """Runtime gravity change (Phase 6a). Wraps model.set_gravity(vec3)."""
