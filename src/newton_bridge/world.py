@@ -39,6 +39,38 @@ def parse_drive_mode(name: str) -> newton.JointTargetMode:
         ) from None
 
 
+# Newton 1.1.0 has no native particle↔body constraint. The franka softbody
+# example pins particle_mass=0 (in PR 2) and overwrites particle_q/qd from
+# the attached body's transform every substep — this kernel is the overwrite.
+# Spatial vector layout for body_qd is (omega, v_lin) in Newton 1.x.
+@wp.kernel
+def update_attach_particles(
+    body_q: wp.array(dtype=wp.transform),  # type: ignore[valid-type]
+    body_qd: wp.array(dtype=wp.spatial_vector),  # type: ignore[valid-type]
+    attach_particle_idx: wp.array(dtype=wp.int32),  # type: ignore[valid-type]
+    attach_body_idx: wp.array(dtype=wp.int32),  # type: ignore[valid-type]
+    attach_local_pos: wp.array(dtype=wp.vec3),  # type: ignore[valid-type]
+    particle_q: wp.array(dtype=wp.vec3),  # type: ignore[valid-type]
+    particle_qd: wp.array(dtype=wp.vec3),  # type: ignore[valid-type]
+):
+    tid = wp.tid()
+    pi = attach_particle_idx[tid]
+    bi = attach_body_idx[tid]
+    local = attach_local_pos[tid]
+
+    xform = body_q[bi]
+    p = wp.transform_get_translation(xform)
+    q = wp.transform_get_rotation(xform)
+
+    r_world = wp.quat_rotate(q, local)
+    particle_q[pi] = p + r_world
+
+    twist = body_qd[bi]
+    omega = wp.spatial_top(twist)
+    v_lin = wp.spatial_bottom(twist)
+    particle_qd[pi] = v_lin + wp.cross(omega, r_world)
+
+
 class NewtonWorld:
     """Thin wrapper: build model, hold solver + double-buffered state."""
 
@@ -145,6 +177,13 @@ class NewtonWorld:
         # plus the resolved attach (body_index, local_offset) tuples that
         # the post-finalize step needs to pin particle_mass.
         self._build_softbodies(builder)
+
+        # SolverVBD requires `model.particle_color_groups` populated by
+        # `builder.color()` (graph coloring of the soft-mesh constraint
+        # graph). Newton's example_softbody_franka does this immediately
+        # before finalize. No-op when no soft particles are present.
+        if self.softbodies:
+            builder.color()
 
         self.model = builder.finalize(device=self.device)
         self.state_0 = self.model.state()
@@ -286,11 +325,22 @@ class NewtonWorld:
                 k_damp=spec.material.k_damp,
                 density=spec.material.density,
             )
+            # Newton 1.1.0: add_soft_mesh dispatches into warp built-ins, so
+            # pos/rot/vel must be wp.vec3 / wp.quat — passing lists/tuples
+            # raises "Built-in functions cannot be called with non-Warp array
+            # types" at finalize time.
             kwargs = dict(
-                pos=list(spec.pos),
-                rot=list(spec.rot),
-                scale=spec.scale,
-                vel=(0.0, 0.0, 0.0),
+                pos=wp.vec3(
+                    float(spec.pos[0]), float(spec.pos[1]), float(spec.pos[2])
+                ),
+                rot=wp.quat(
+                    float(spec.rot[0]),
+                    float(spec.rot[1]),
+                    float(spec.rot[2]),
+                    float(spec.rot[3]),
+                ),
+                scale=float(spec.scale),
+                vel=wp.vec3(0.0, 0.0, 0.0),
                 density=spec.material.density,
                 k_mu=spec.material.k_mu,
                 k_lambda=spec.material.k_lambda,
@@ -514,10 +564,42 @@ class NewtonWorld:
             if spec.contact.mu is not None:
                 self.model.soft_contact_mu = float(spec.contact.mu)
 
+        # Pre-allocate the soft contacts buffer that the captured graph will
+        # write to in-place (graphs cannot allocate). Mirrors the rigid
+        # `self.contacts` buffer pattern. Distinct buffer because the rigid
+        # solver and CollisionPipeline don't share contact storage in 1.1.0.
+        self.soft_contacts = self.collision_pipeline.contacts()
+
+        # Gravity-toggle buffers used by the hybrid step. Newton's
+        # model.gravity is a wp.array(vec3); we swap two pre-built arrays
+        # in/out to disable gravity during the rigid kinematic phase. Pulls
+        # the configured gravity from the model so the toggle is consistent
+        # with whatever set_gravity() / yaml configured.
+        g = np.asarray(self.model.gravity.numpy(), dtype=np.float32).reshape(-1, 3)[0]
+        self._gravity_zero_buf = wp.array(
+            [(0.0, 0.0, 0.0)], dtype=wp.vec3, device=self.device
+        )
+        self._gravity_active_buf = wp.array(
+            [(float(g[0]), float(g[1]), float(g[2]))],
+            dtype=wp.vec3,
+            device=self.device,
+        )
+
+        # Attach kernel launch dim — int(0) when there are no attachments
+        # (the kernel branch then becomes a no-op via `if self._attach_count`).
+        self._attach_count = (
+            0 if self.attach_particle_idx is None
+            else int(self.attach_particle_idx.shape[0])
+        )
+
     def set_gravity(self, gravity: tuple[float, float, float]) -> None:
         """Runtime gravity change (Phase 6a). Wraps model.set_gravity(vec3)."""
         g = [float(gravity[0]), float(gravity[1]), float(gravity[2])]
         self.model.set_gravity(g)
+        # Hybrid mode caches the active gravity in a wp.array so the
+        # captured graph can swap it in/out per substep — keep it in sync.
+        if self.softbodies:
+            self._gravity_active_buf.assign([(g[0], g[1], g[2])])
         # Newton solvers cache model state at construction; tell the solver
         # to re-read, then recapture the graph so it picks up the new params.
         notify = getattr(self.solver, "notify_model_changed", None)
@@ -675,13 +757,96 @@ class NewtonWorld:
         runs *inside* the captured sequence, the graph encodes a fixed
         ping-pong over two pre-allocated state buffers — every launch
         produces the same input→output memory mapping.
+
+        Hybrid (softbody) mode follows Newton's `example_softbody_franka.py`:
+        rigid solver runs as a kinematic integrator (particle_count=0,
+        gravity=0, shape_contact_pair_count=0) so it produces body
+        velocities without touching particles or fighting contacts;
+        attach kernel pins the kinematic particles to those fresh body
+        transforms; CollisionPipeline + SolverVBD then advance the soft
+        bodies. Single state-swap at the end matches the rigid-only path.
         """
+        if self.softbodies:
+            self._step_kernels_hybrid()
+        else:
+            self._step_kernels_rigid()
+
+    def _step_kernels_rigid(self) -> None:
         dt = self.physics_dt / self.substeps
         for _ in range(self.substeps):
             self.model.collide(self.state_0, self.contacts)
             self.state_0.clear_forces()
             self.solver.step(
                 self.state_0, self.state_1, self.control, self.contacts, dt
+            )
+            self.state_0, self.state_1 = self.state_1, self.state_0
+
+    def _step_kernels_hybrid(self) -> None:
+        dt = self.physics_dt / self.substeps
+        soft_solver = self.soft_solver
+        collision_pipeline = self.collision_pipeline
+        assert soft_solver is not None and collision_pipeline is not None, (
+            "_step_kernels_hybrid invoked without soft_solver/collision_pipeline; "
+            "this is an invariant violation — softbodies non-empty implies both."
+        )
+        # rebuild_bvh is a per-frame (not per-substep) op in the franka
+        # example; cheap to run once before the substep loop.
+        soft_solver.rebuild_bvh(self.state_0)
+
+        # shape_contact_pair_count is restored each substep via this
+        # captured value. Reading once outside the loop is fine — the value
+        # is constant after finalize.
+        spcc = int(self.model.shape_contact_pair_count)
+
+        for _ in range(self.substeps):
+            self.state_0.clear_forces()
+            self.state_1.clear_forces()
+            self.model.collide(self.state_0, self.contacts)
+
+            # --- rigid kinematic phase: disable particles, gravity, rigid
+            # contacts so Featherstone/MuJoCo just integrates joint targets
+            # into body_q/body_qd without disturbing the soft system.
+            pc = self.model.particle_count
+            self.model.particle_count = 0
+            self.model.gravity.assign(self._gravity_zero_buf)
+            self.model.shape_contact_pair_count = 0
+
+            self.solver.step(
+                self.state_0, self.state_1, self.control, self.contacts, dt
+            )
+
+            # state_1 holds the freshly integrated rigid result. Restore
+            # model fields and zero any spurious particle_f the rigid
+            # solver may have written into state_1.
+            self.state_1.particle_f.zero_()
+            self.model.particle_count = pc
+            self.model.gravity.assign(self._gravity_active_buf)
+            self.model.shape_contact_pair_count = spcc
+
+            # --- attach: overwrite kinematic particles to follow body_q.
+            if self._attach_count:
+                wp.launch(
+                    update_attach_particles,
+                    dim=self._attach_count,
+                    inputs=[
+                        self.state_1.body_q,
+                        self.state_1.body_qd,
+                        self.attach_particle_idx,
+                        self.attach_body_idx,
+                        self.attach_local_pos,
+                        self.state_1.particle_q,
+                        self.state_1.particle_qd,
+                    ],
+                    device=self.device,
+                )
+
+            # --- soft phase: collision against the freshly-posed scene,
+            # then VBD step. Soft solver writes state_0 from state_1 (note
+            # the input/output swap) so the trailing rename keeps state_0
+            # as "current" — same convention as the rigid-only path.
+            collision_pipeline.collide(self.state_1, self.soft_contacts)
+            soft_solver.step(
+                self.state_1, self.state_0, self.control, self.soft_contacts, dt
             )
             self.state_0, self.state_1 = self.state_1, self.state_0
 
