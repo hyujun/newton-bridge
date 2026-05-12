@@ -60,6 +60,25 @@ rm -rf robots/franka/models/*
 cp -r "${MENAGERIE}/franka_emika_panda/"*.xml robots/franka/models/
 cp -r "${MENAGERIE}/franka_emika_panda/assets" robots/franka/models/ 2>/dev/null || true
 
+# Patch panda.xml: drop the <tendon name="split"> + actuator8 pair that drives
+# fingers closed via a strong biasprm spring. With both fingers exposed and
+# the <equality><joint .../> linking them, the tendon actuator fights the
+# robot.yaml position drive and breaks the open command (finger_joint1=0.04
+# settles at ~0.008 instead of 0.04). See docs/CONSTRAINTS.md.
+log "  patching panda.xml (drop tendon=split + actuator8)"
+python3 - <<'PYEOF'
+import re, pathlib
+p = pathlib.Path("robots/franka/models/panda.xml")
+s = p.read_text()
+s = re.sub(r"\n\s*<tendon>.*?</tendon>\n", "\n", s, count=1, flags=re.S)
+s = re.sub(
+    r'\n\s*<!--[^\n]*Remap original ctrlrange[^\n]*-->\n\s*<general[^/]*name="actuator8"[^/]*/>\n',
+    "\n", s, count=1, flags=re.S,
+)
+s = re.sub(r'(<key name="home"[^>]*ctrl="[^"]*?)\s+255(")', r'\1\2', s, count=1)
+p.write_text(s)
+PYEOF
+
 # -- 3) kuka_iiwa_14 ----------------------------------------------------------
 log "populating robots/kuka_iiwa_14/models"
 mkdir -p robots/kuka_iiwa_14/models

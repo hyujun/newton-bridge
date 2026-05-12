@@ -43,13 +43,21 @@ drive:
   stiffness: 8000.0
   damping: 80.0
 
-# Per-joint drive override: the finger has ~15g of mass and a 0–4cm range,
-# so arm-scale gains (8000/80) would saturate. Tuned by Phase 1a smoke test.
+# Per-joint drive override:
+#  - finger_joint1: ~15g mass, 0–4cm range; arm-scale gains (8000/80) saturate
+#    so we tune down. Phase 1a smoke result.
+#  - finger_joint2: passive (driven by <equality> in panda.xml). drive must be
+#    zero or it fights the equality and drags both fingers toward target=0.0
+#    (the default drive target with no home_pose entry). See docs/CONSTRAINTS.md.
 joints:
   finger_joint1:
     drive:
       stiffness: 2000.0
       damping: 50.0
+  finger_joint2:
+    drive:
+      stiffness: 0.0
+      damping: 0.0
 
 ros:
   joint_states_topic:   /joint_states

@@ -7,8 +7,9 @@ newton-bridge 문서 인덱스. 처음 사용자는 위에서부터 순서대로
 1. **[INSTALL.md](INSTALL.md)** — 호스트 prereq · `install.sh` · `fetch_assets.sh` · `build.sh` · verify
 2. **[USAGE.md](USAGE.md)** — `run.sh` 하위명령 + 일상 워크플로우 (freerun/sync, controller_demo, Jupyter, 벤치, 센서, /tf)
 3. **[ROBOTS.md](ROBOTS.md)** — 내 로봇 추가. **호스트의 외부 robot_description 폴더 직접 사용 (Path D)** 이 가장 흔한 경로
-4. **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — 단계별 실패 모드 + 조치
-5. **[CONFIGURATION.md](CONFIGURATION.md)** — 레퍼런스: 모든 env var · `robot.yaml`/`scene.yaml` 스키마 · ROS 토픽/서비스 계약 · viewer 모드
+4. **[CONSTRAINTS.md](CONSTRAINTS.md)** — `<mimic>`·`<equality>` (그리퍼·평행 핸드·폐사슬). passive joint 가 있는 로봇은 `solver: mujoco` + drive=0 규칙 필독
+5. **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — 단계별 실패 모드 + 조치
+6. **[CONFIGURATION.md](CONFIGURATION.md)** — 레퍼런스: 모든 env var · `robot.yaml`/`scene.yaml` 스키마 · ROS 토픽/서비스 계약 · viewer 모드
 
 ## 컨트리뷰터 / 내부 작업
 

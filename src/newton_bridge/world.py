@@ -7,6 +7,7 @@ moves things around.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +17,8 @@ import newton
 from newton.selection import ArticulationView
 
 from .softbody import SoftbodySpec, load_softbody_npz, parse_softbodies
+
+log = logging.getLogger(__name__)
 
 
 # JointTargetMode name (yaml) -> enum. Accepted on pack['drive.mode'] and
@@ -519,6 +522,21 @@ class NewtonWorld:
             raise ValueError(
                 f"solver {solver_name!r} rejected solver_params={kwargs!r}: {exc}"
             ) from None
+
+        # Only SolverMuJoCo honors <mimic> and <equality>. Other solvers
+        # silently ignore them, which manifests as passive joints not moving.
+        # See docs/CONSTRAINTS.md.
+        if solver_name != "mujoco":
+            n_eq = int(getattr(self.model, "equality_constraint_count", 0) or 0)
+            n_mimic = int(getattr(self.model, "constraint_mimic_count", 0) or 0)
+            if n_eq or n_mimic:
+                log.warning(
+                    "solver=%r silently ignores %d equality + %d mimic "
+                    "constraint(s); passive joints will not move. "
+                    "Use solver=mujoco for grasping / closed-chain robots "
+                    "(see docs/CONSTRAINTS.md).",
+                    solver_name, n_eq, n_mimic,
+                )
 
         # Hybrid mode: when softbodies are present, a separate VBD solver
         # owns the soft particles and a CollisionPipeline produces soft
