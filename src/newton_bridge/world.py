@@ -773,13 +773,24 @@ class NewtonWorld:
 
     def _step_kernels_rigid(self) -> None:
         dt = self.physics_dt / self.substeps
-        for _ in range(self.substeps):
+        n = self.substeps
+        odd = n % 2 == 1
+        for i in range(n):
             self.model.collide(self.state_0, self.contacts)
             self.state_0.clear_forces()
             self.solver.step(
                 self.state_0, self.state_1, self.control, self.contacts, dt
             )
-            self.state_0, self.state_1 = self.state_1, self.state_0
+            # On the final substep when n is odd, copy the result back into
+            # state_0 instead of rebinding Python refs. The Python swap is
+            # not recorded into a captured CUDA graph, so an odd number of
+            # swaps leaves the graph with baked-in (state_in=s0_orig,
+            # state_out=s1_orig) and s0_orig never receives new input —
+            # state never progresses. See newton.State.assign() docstring.
+            if odd and i == n - 1:
+                self.state_0.assign(self.state_1)
+            else:
+                self.state_0, self.state_1 = self.state_1, self.state_0
 
     def _step_kernels_hybrid(self) -> None:
         dt = self.physics_dt / self.substeps
@@ -798,7 +809,9 @@ class NewtonWorld:
         # is constant after finalize.
         spcc = int(self.model.shape_contact_pair_count)
 
-        for _ in range(self.substeps):
+        n = self.substeps
+        odd = n % 2 == 1
+        for i in range(n):
             self.state_0.clear_forces()
             self.state_1.clear_forces()
             self.model.collide(self.state_0, self.contacts)
@@ -848,7 +861,13 @@ class NewtonWorld:
             soft_solver.step(
                 self.state_1, self.state_0, self.control, self.soft_contacts, dt
             )
-            self.state_0, self.state_1 = self.state_1, self.state_0
+            # See _step_kernels_rigid for the odd-substep / graph-capture
+            # rationale. The soft phase already writes state_1→state_0, so
+            # the trailing operation here is the same swap-vs-assign choice.
+            if odd and i == n - 1:
+                self.state_0.assign(self.state_1)
+            else:
+                self.state_0, self.state_1 = self.state_1, self.state_0
 
     def _capture_step_graph(self) -> None:
         """Capture `_step_kernels` into a CUDA graph (cuda devices only).
