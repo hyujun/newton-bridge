@@ -1,11 +1,11 @@
-# Franka Emika Panda — 7-DoF arm.
+# Franka Emika Panda — 7-DoF arm + 1-DoF gripper.
 # Source: mujoco_menagerie / franka_emika_panda (Apache-2.0).
 # Pulled in by scripts/host/fetch_assets.sh.
 #
-# Scope: arm only (7 DoF). The gripper fingers are intentionally excluded
-# from joint_names so /joint_command stays uniform across all packs. To
-# expose the gripper, add "finger_joint1" / "finger_joint2" to joint_names
-# (or fork a separate pack — see docs/TOPICS.md "Extension: gripper topic").
+# Gripper exposure: only `finger_joint1` is in joint_names. `finger_joint2`
+# follows via an MJCF <equality><joint> coupling that SolverMuJoCo honors
+# at every step — see docs/CONSTRAINTS.md. Commanding either finger via
+# /joint_command would conflict with the equality; we expose just one.
 
 robot:
   source: mjcf
@@ -15,7 +15,7 @@ robot:
 sim:
   physics_hz: 400
   substeps: 1
-  solver: mujoco         # panda.xml ships MuJoCo actuators; SolverMuJoCo honors them
+  solver: mujoco         # required for <equality> / <mimic> support
   ground_plane: true
 
 joint_names:
@@ -26,6 +26,7 @@ joint_names:
   - joint5
   - joint6
   - joint7
+  - finger_joint1        # finger_joint2 is dragged by <equality> in panda.xml
 
 home_pose:
   joint1: 0.0
@@ -35,11 +36,20 @@ home_pose:
   joint5: 0.0
   joint6: 1.5708
   joint7: 0.7854
+  finger_joint1: 0.04    # open
 
 drive:
   mode: position
   stiffness: 8000.0
   damping: 80.0
+
+# Per-joint drive override: the finger has ~15g of mass and a 0–4cm range,
+# so arm-scale gains (8000/80) would saturate. Tuned by Phase 1a smoke test.
+joints:
+  finger_joint1:
+    drive:
+      stiffness: 2000.0
+      damping: 50.0
 
 ros:
   joint_states_topic:   /joint_states
