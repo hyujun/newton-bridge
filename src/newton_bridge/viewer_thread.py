@@ -37,6 +37,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from .picking_overlay import PickingOverlay
 from .snapshot import StateSnapshot
 from .telemetry import TelemetryRegistry
 from .ticks import RenderTicker
@@ -216,6 +217,23 @@ class ViewerThread:
             except Exception:
                 log.exception("register_ui_callback failed; HUD will not show")
 
+        # Picking overlay (HUD + magenta wireframe). GL-only: needs picking
+        # + log_lines + register_ui_callback. Other viewers silently skip.
+        self._picking_overlay: PickingOverlay | None = None
+        if (
+            viewer is not None
+            and getattr(viewer, "model", None) is not None
+            and hasattr(viewer, "picking")
+            and hasattr(viewer, "log_lines")
+            and hasattr(viewer, "register_ui_callback")
+        ):
+            try:
+                self._picking_overlay = PickingOverlay(viewer)
+                self._picking_overlay.register_hud()
+            except Exception:
+                log.exception("PickingOverlay init failed; overlay disabled")
+                self._picking_overlay = None
+
         self.ready_event.set()
 
         ticker = RenderTicker(render_hz=self._viewer_hz)
@@ -271,6 +289,8 @@ class ViewerThread:
                 viewer.begin_frame(view.sim_time)
                 self._last_sim_time = float(view.sim_time)
                 viewer.log_state(view.state)
+                if self._picking_overlay is not None:
+                    self._picking_overlay.update(view.state)
                 self._log_telemetry_scalars(viewer)
                 end = getattr(viewer, "end_frame", None)
                 if callable(end):

@@ -22,7 +22,7 @@
 ```bash
 ROBOT=franka ./scripts/host/run.sh sim                            # pack 만 변경
 SYNC_MODE=sync ./scripts/host/run.sh sim                          # sync mode 변경
-VIEWER=gl ./scripts/host/run.sh sim                               # 네이티브 X11 창
+VIEWER=gl ./scripts/host/run.sh sim                               # 네이티브 X11 창 (우클릭 드래그로 link 에 force 인가 가능)
 ROBOT=kuka_iiwa_14 SYNC_MODE=sync VIEWER=none \
     ./scripts/host/run.sh sim                                     # 전부 조합
 ```
