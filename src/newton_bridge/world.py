@@ -316,15 +316,21 @@ class NewtonWorld:
             attach.body_index                   # index into model.body_q
             attach.local_offset (3,) float32    # body-frame pin location
 
+        **Frame semantics**: YAML `pos`/`rot` are interpreted in the
+        `attach.body` link's local frame — i.e. the pad sits at
+        `T_body ∘ (pos, rot)` relative to the link, independent of the
+        robot's `base_position` or home pose. Newton's `add_soft_mesh` only
+        accepts a world-frame spawn transform, so here we compose the body's
+        builder-initial transform `(p0, q0)` with the spec's local transform
+        to derive the world spawn pose. Local offsets fed to the attach
+        kernel are expressed directly in body frame as
+        `R_spec @ (v * scale) + p_spec` — they don't carry `(p0, q0)` at
+        all, since the kernel re-projects them per substep using the body's
+        live transform.
+
         The body index is resolved against the builder's pre-finalize body
         label list (NOT the post-finalize ArticulationView, which doesn't
-        exist yet at this stage). Local offsets are computed from the
-        builder's initial body transform: local = R0^T · (vertex_world - p0).
-
-        Vertex_world is the npz vertex with the spec's xform applied — i.e.
-        the position the particle will sit at right after finalize, which
-        keeps the attach-kernel offset consistent with the actual particle
-        spawn position.
+        exist yet at this stage).
         """
         if not self.softbodies:
             self._softbody_layout = []
@@ -338,50 +344,9 @@ class NewtonWorld:
         for spec in self.softbodies:
             arrays = load_softbody_npz(spec.asset_path)
 
-            # particle_q starts at the current vertex count — this is the
-            # offset newton.ModelBuilder appends new soft-mesh particles at.
-            start = int(builder.particle_count)
-            mesh = newton.TetMesh(
-                arrays.vertices,
-                arrays.tet_indices,
-                k_mu=spec.material.k_mu,
-                k_lambda=spec.material.k_lambda,
-                k_damp=spec.material.k_damp,
-                density=spec.material.density,
-            )
-            # Newton 1.1.0: add_soft_mesh dispatches into warp built-ins, so
-            # pos/rot/vel must be wp.vec3 / wp.quat — passing lists/tuples
-            # raises "Built-in functions cannot be called with non-Warp array
-            # types" at finalize time.
-            kwargs = dict(
-                pos=wp.vec3(
-                    float(spec.pos[0]), float(spec.pos[1]), float(spec.pos[2])
-                ),
-                rot=wp.quat(
-                    float(spec.rot[0]),
-                    float(spec.rot[1]),
-                    float(spec.rot[2]),
-                    float(spec.rot[3]),
-                ),
-                scale=float(spec.scale),
-                vel=wp.vec3(0.0, 0.0, 0.0),
-                density=spec.material.density,
-                k_mu=spec.material.k_mu,
-                k_lambda=spec.material.k_lambda,
-                k_damp=spec.material.k_damp,
-            )
-            if spec.particle_radius is not None:
-                kwargs["particle_radius"] = spec.particle_radius
-            builder.add_soft_mesh(mesh=mesh, **kwargs)
-            count = int(builder.particle_count) - start
-            if count <= 0:
-                raise RuntimeError(
-                    f"softbody {spec.name!r}: builder.add_soft_mesh added "
-                    f"{count} particles (expected > 0)"
-                )
-            layout.append((start, count))
-
-            # Resolve the URDF/MJCF link name to a body index.
+            # Resolve the URDF/MJCF link name to a body index up front — we
+            # need (p0, q0) before add_soft_mesh so the spawn transform can
+            # be composed in world frame.
             try:
                 body_index = body_labels.index(spec.attach.body)
             except ValueError:
@@ -404,12 +369,61 @@ class NewtonWorld:
             p0 = bq[body_index, 0:3].astype(np.float32)
             q0 = bq[body_index, 3:7].astype(np.float32)  # xyzw
 
-            # Particle world spawn = npz vertex * scale, rotated by spec.rot,
-            # then translated by spec.pos. We mirror that math here so the
-            # local offset we hand PR 3 lines up exactly with the particle
-            # the kernel will overwrite.
-            spec_R = self._quat_to_matrix(np.asarray(spec.rot, dtype=np.float32))
+            # Compose world spawn transform: T_world = T_body0 ∘ T_spec.
+            # spec.pos / spec.rot are body-local, so the world spawn pose is
+            # the link's builder-time pose multiplied by the local offset.
             spec_p = np.asarray(spec.pos, dtype=np.float32)
+            spec_q = np.asarray(spec.rot, dtype=np.float32)
+            world_p, world_q = self._transform_compose(p0, q0, spec_p, spec_q)
+
+            # particle_q starts at the current vertex count — this is the
+            # offset newton.ModelBuilder appends new soft-mesh particles at.
+            start = int(builder.particle_count)
+            mesh = newton.TetMesh(
+                arrays.vertices,
+                arrays.tet_indices,
+                k_mu=spec.material.k_mu,
+                k_lambda=spec.material.k_lambda,
+                k_damp=spec.material.k_damp,
+                density=spec.material.density,
+            )
+            # Newton 1.1.0: add_soft_mesh dispatches into warp built-ins, so
+            # pos/rot/vel must be wp.vec3 / wp.quat — passing lists/tuples
+            # raises "Built-in functions cannot be called with non-Warp array
+            # types" at finalize time.
+            kwargs = dict(
+                pos=wp.vec3(
+                    float(world_p[0]), float(world_p[1]), float(world_p[2])
+                ),
+                rot=wp.quat(
+                    float(world_q[0]),
+                    float(world_q[1]),
+                    float(world_q[2]),
+                    float(world_q[3]),
+                ),
+                scale=float(spec.scale),
+                vel=wp.vec3(0.0, 0.0, 0.0),
+                density=spec.material.density,
+                k_mu=spec.material.k_mu,
+                k_lambda=spec.material.k_lambda,
+                k_damp=spec.material.k_damp,
+            )
+            if spec.particle_radius is not None:
+                kwargs["particle_radius"] = spec.particle_radius
+            builder.add_soft_mesh(mesh=mesh, **kwargs)
+            count = int(builder.particle_count) - start
+            if count <= 0:
+                raise RuntimeError(
+                    f"softbody {spec.name!r}: builder.add_soft_mesh added "
+                    f"{count} particles (expected > 0)"
+                )
+            layout.append((start, count))
+
+            # Body-frame local offset: directly express the pinned vertex in
+            # the link's frame. `pos`/`rot`/`scale` already define the pad's
+            # pose relative to the link, so the offset is just the spec
+            # transform applied to the npz vertex — no (p0, q0) involved.
+            spec_R = self._quat_to_matrix(spec_q)
 
             local_offsets = []
             for vi in spec.attach.vertex_indices:
@@ -419,10 +433,7 @@ class NewtonWorld:
                         f"{vi} but mesh only has {arrays.vertex_count} vertices"
                     )
                 v = arrays.vertices[vi].astype(np.float32) * float(spec.scale)
-                world = spec_R @ v + spec_p
-                # local = R0^T · (world - p0)
-                R0 = self._quat_to_matrix(q0)
-                local = R0.T @ (world - p0)
+                local = spec_R @ v + spec_p
                 local_offsets.append(local)
 
             attach_meta.append(
@@ -450,6 +461,41 @@ class NewtonWorld:
             if v:
                 return list(v)
         return [f"body_{i}" for i in range(int(getattr(builder, "body_count", 0)))]
+
+    @staticmethod
+    def _quat_mul(qa: np.ndarray, qb: np.ndarray) -> np.ndarray:
+        """Hamilton product of two xyzw quaternions (qa ∘ qb)."""
+        ax, ay, az, aw = (float(qa[0]), float(qa[1]), float(qa[2]), float(qa[3]))
+        bx, by, bz, bw = (float(qb[0]), float(qb[1]), float(qb[2]), float(qb[3]))
+        return np.asarray(
+            [
+                aw * bx + ax * bw + ay * bz - az * by,
+                aw * by - ax * bz + ay * bw + az * bx,
+                aw * bz + ax * by - ay * bx + az * bw,
+                aw * bw - ax * bx - ay * by - az * bz,
+            ],
+            dtype=np.float32,
+        )
+
+    @classmethod
+    def _transform_compose(
+        cls,
+        p_a: np.ndarray,
+        q_a: np.ndarray,
+        p_b: np.ndarray,
+        q_b: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """SE(3) compose: T_a ∘ T_b → (p, q).
+
+        For softbody spawn: T_a is the body's builder-initial world transform,
+        T_b is the YAML-specified body-local offset. The composed translation
+        is `p_a + R_a · p_b`; rotation is the Hamilton product `q_a * q_b`.
+        Quaternions are xyzw to match Newton's body_q convention.
+        """
+        R_a = cls._quat_to_matrix(q_a)
+        p = p_a.astype(np.float32) + (R_a @ p_b.astype(np.float32))
+        q = cls._quat_mul(q_a, q_b)
+        return p.astype(np.float32), q.astype(np.float32)
 
     @staticmethod
     def _quat_to_matrix(q: np.ndarray) -> np.ndarray:

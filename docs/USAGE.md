@@ -164,8 +164,8 @@ drive: {...}
 softbodies:
   - name: left_fingertip_pad
     asset_rel: softbody/pad.npz       # vertices + tet_indices 만 가진 .npz
-    pos: [0.0, 0.0, 0.0]              # link 좌표가 아니라 "월드 spawn" — attach 가 즉시 끌어감
-    rot: [0.0, 0.0, 0.0, 1.0]         # xyzw
+    pos: [0.0, 0.0, 0.005]            # attach.body local frame 기준 offset (m)
+    rot: [0.0, 0.0, 0.0, 1.0]         # xyzw, attach.body local frame
     scale: 1.0
     material: {density: 100, k_mu: 1.0e6, k_lambda: 1.0e6, k_damp: 1.0e-6}
     particle_radius: 0.003
@@ -175,7 +175,9 @@ softbodies:
     contact: {ke: 2.0e6, kd: 1.0e-7, mu: 0.5}
 ```
 
-`.npz` 는 `np.savez(path, vertices=V, tet_indices=T)` 로 만들면 됩니다 — 다른 키는 무시. pack 디렉토리 기준 상대 경로:
+**`pos`/`rot` 은 link local frame 기준** — base_position 이나 home pose 에 따라 link 가 world 어디에 있든, 사용자가 적은 값은 "link 표면에서 얼마나 떨어진/돌아간 위치인지" 그대로의 의미를 갖습니다.
+
+`.npz` 는 `np.savez(path, vertices=V, tet_indices=T)` 로 만들면 됩니다 — 다른 키는 무시. 로더가 inverted tet (자동 수정 + WARN), disconnected mesh (에러), bbox > 1m (mm 단위 의심 WARN) 을 검사합니다. pack 디렉토리 기준 상대 경로:
 
 ```
 robots/my_pack/

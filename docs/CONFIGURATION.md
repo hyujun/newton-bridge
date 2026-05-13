@@ -147,8 +147,8 @@ worlds:
         softbodies:                  # optional, per-articulation (hybrid mode)
           - name: left_fingertip_pad
             asset_rel: softbody/pad.npz   # pack-relative .npz (vertices + tet_indices)
-            pos: [0.0, 0.0, 0.0]          # 월드 spawn 위치 (default 원점)
-            rot: [0.0, 0.0, 0.0, 1.0]     # quaternion xyzw, default identity
+            pos: [0.0, 0.0, 0.0]          # attach.body local frame offset (default 원점)
+            rot: [0.0, 0.0, 0.0, 1.0]     # quaternion xyzw, attach.body local frame
             scale: 1.0
             material:
               density: 100.0
@@ -258,6 +258,13 @@ ros:
 `rebuild_bvh` 는 substep 루프 *밖*에서 한 번만 호출. 비-softbody pack 은 기존 rigid-only 경로 (`_step_kernels_rigid`) 가 그대로 — softbody 추가가 기존 동작을 깨지 않습니다.
 
 **`.npz` 스키마:** `vertices` (N×3 float32), `tet_indices` (T×4 int32) **만** 필요. 모든 attach/material/contact 정보는 `softbodies:` 블록에 둡니다.
+
+**Frame semantics:** `pos`/`rot`/`scale` 은 `attach.body` link 의 **local frame** 기준. 즉 pad 는 link 에서 `T_body ∘ (pos, rot)` 위치에 박힙니다. `base_position` 이나 home pose 에 따라 link world pose 가 어디 있든 사용자가 적은 `pos` 는 그대로 "link 기준 offset" 으로 해석됩니다.
+
+**`.npz` 자동 검사 (loader):**
+- **Inverted tet**: signed volume `< 0` 인 tet 은 노드 1↔2 swap 으로 자동 수정 + WARNING. degenerate tet (`|V|≈0`) 은 WARNING 만 (수정 불가).
+- **Disconnected mesh**: 단일 connected component 아니면 `ValueError` 로 거절. 여러 component 를 자동 추출하지 않습니다 (vertex 재인덱싱이 yaml 의 `vertex_indices` 와 어긋날 위험).
+- **Scale sanity**: bbox 가 1m 초과면 WARNING ("mm 단위 의심"). 에러는 아님.
 
 **제약 (Newton 1.2.0):**
 - `contact.{ke,kd,mu}` 는 글로벌 — 여러 spec 이 있으면 **마지막 spec 이 winner**.

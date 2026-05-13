@@ -18,8 +18,8 @@ into the canonical scene under each articulation entry):
     softbodies:
       - name: left_fingertip_pad
         asset_rel: softbody/a.npz   # path relative to the pack dir
-        pos: [0.0, 0.0, 0.0]        # default [0,0,0]
-        rot: [0.0, 0.0, 0.0, 1.0]   # default identity (xyzw)
+        pos: [0.0, 0.0, 0.0]        # attach.body local frame offset
+        rot: [0.0, 0.0, 0.0, 1.0]   # attach.body local frame (xyzw, default I)
         scale: 1.0                  # default 1.0
         material:
           density: 100.0
@@ -35,24 +35,39 @@ into the canonical scene under each articulation entry):
           kd: 1.0e-7
           mu: 0.5
 
+`pos`/`rot`/`scale` describe the pad's pose in `attach.body`'s LOCAL frame
+— independent of base_position or home pose. NewtonWorld composes them
+with the link's builder-initial world transform to derive the actual
+spawn pose (see `_build_softbodies` in `world.py`).
+
 This module is intentionally Newton-free so it can run in host pytest
 without the Newton container. The only required keys in the .npz are
 `vertices` (N, 3) float and `tet_indices` (T, 4) int. They are coerced
-to float32 / int32 at load time.
+to float32 / int32 at load time. The loader also runs three geometry
+sanity checks (inverted-tet auto-fix, disconnected-mesh rejection,
+mm-scale warning); see `_fix_inverted_tets`, `_assert_single_component`,
+and `_warn_if_suspicious_scale` below.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+log = logging.getLogger(__name__)
+
 
 # -- npz schema --------------------------------------------------------------
 
 REQUIRED_NPZ_KEYS = ("vertices", "tet_indices")
+
+# Bbox larger than this on any axis triggers the "did you mean mm?" warning.
+# 1m is a generous upper bound for any realistic softbody pad/finger asset.
+_SCALE_WARN_THRESHOLD_M = 1.0
 
 
 @dataclass(frozen=True)
@@ -120,7 +135,140 @@ def load_softbody_npz(path: Path) -> TetMeshArrays:
             f"min={int(tet_indices.min())} max={int(tet_indices.max())}"
         )
 
+    # --- sanity checks. Mesh has the right schema; now verify the geometry
+    # won't blow up the solver. Inverted-tet auto-fix is non-destructive
+    # (just swaps two vertex indices), so we apply it inline. Disconnected
+    # meshes are a hard error because picking the largest component would
+    # silently discard vertices and re-index everything — better to fail
+    # loud and force the user to re-mesh.
+    tet_indices = _fix_inverted_tets(vertices, tet_indices, source=str(p))
+    _assert_single_component(vertices, tet_indices, source=str(p))
+    _warn_if_suspicious_scale(vertices, source=str(p))
+
     return TetMeshArrays(vertices=vertices, tet_indices=tet_indices)
+
+
+# -- sanity helpers ---------------------------------------------------------
+
+
+def _tet_volumes(vertices: np.ndarray, tet_indices: np.ndarray) -> np.ndarray:
+    """Signed tet volume V = det([e1, e2, e3]) / 6, vectorized over tets.
+
+    Negative or zero values mean inverted or degenerate. Result is (T,) float64.
+    """
+    v0 = vertices[tet_indices[:, 0]].astype(np.float64)
+    v1 = vertices[tet_indices[:, 1]].astype(np.float64)
+    v2 = vertices[tet_indices[:, 2]].astype(np.float64)
+    v3 = vertices[tet_indices[:, 3]].astype(np.float64)
+    mats = np.stack([v1 - v0, v2 - v0, v3 - v0], axis=2)  # (T, 3, 3)
+    return np.linalg.det(mats) / 6.0
+
+
+def _fix_inverted_tets(
+    vertices: np.ndarray, tet_indices: np.ndarray, *, source: str
+) -> np.ndarray:
+    """Detect tets with non-positive signed volume; swap nodes 1↔2 to flip
+    orientation. Returns the (possibly modified) tet_indices array.
+
+    Truly degenerate (`|V|<eps`) tets are reported but not removable here —
+    they survive in the returned array. The solver will treat them as
+    near-zero stiffness contributors; if you want to fail hard, the caller
+    can post-check with `_tet_volumes(...)`.
+    """
+    vols = _tet_volumes(vertices, tet_indices)
+    eps = float(np.finfo(np.float64).eps) * max(1.0, float(np.abs(vols).max()))
+    inverted = vols < -eps
+    degenerate = np.abs(vols) <= eps
+    n_inv = int(inverted.sum())
+    n_deg = int(degenerate.sum())
+
+    if n_inv:
+        out = tet_indices.copy()
+        col1 = out[inverted, 1].copy()
+        out[inverted, 1] = out[inverted, 2]
+        out[inverted, 2] = col1
+        log.warning(
+            "%s: fixed %d inverted tet(s) by swapping nodes 1↔2",
+            source, n_inv,
+        )
+        tet_indices = np.ascontiguousarray(out, dtype=np.int32)
+
+    if n_deg:
+        log.warning(
+            "%s: %d degenerate tet(s) (|V|≈0) detected; "
+            "softbody simulation may be unstable. Consider remeshing.",
+            source, n_deg,
+        )
+
+    return tet_indices
+
+
+def _assert_single_component(
+    vertices: np.ndarray, tet_indices: np.ndarray, *, source: str
+) -> None:
+    """Verify the tet mesh forms a single connected component via BFS over
+    the vertex adjacency induced by tet edges.
+
+    Pure numpy (no scipy) to keep this module dependency-light and host-test
+    friendly. Disconnected meshes are rejected outright — silently keeping
+    the largest component would discard particles the YAML may reference.
+    """
+    n = int(vertices.shape[0])
+    if n == 0:
+        return
+
+    # Build adjacency as a list-of-sets via vectorized edge extraction.
+    # Each tet contributes 6 undirected edges (4 choose 2).
+    edges_a = np.concatenate(
+        [tet_indices[:, i] for i in (0, 0, 0, 1, 1, 2)]
+    )
+    edges_b = np.concatenate(
+        [tet_indices[:, j] for j in (1, 2, 3, 2, 3, 3)]
+    )
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for a, b in zip(edges_a.tolist(), edges_b.tolist()):
+        adj[a].append(b)
+        adj[b].append(a)
+
+    visited = np.zeros(n, dtype=bool)
+    # BFS from vertex 0. Any vertex unreached at the end is in a different
+    # component. (Tet-referenced vertices only — isolated bare vertices in
+    # the npz vertex list are caught by the same test since they'd never be
+    # visited.)
+    stack = [0]
+    visited[0] = True
+    while stack:
+        u = stack.pop()
+        for v in adj[u]:
+            if not visited[v]:
+                visited[v] = True
+                stack.append(v)
+
+    if not visited.all():
+        n_unreached = int((~visited).sum())
+        raise ValueError(
+            f"{source}: tet mesh is disconnected — {n_unreached} of {n} "
+            f"vertices unreachable from vertex 0. Newton solvers assume a "
+            f"single connected component; re-mesh or split the asset."
+        )
+
+
+def _warn_if_suspicious_scale(vertices: np.ndarray, *, source: str) -> None:
+    """Emit a WARNING if the mesh bbox exceeds 1m on any axis.
+
+    Newton is SI (meters). A bbox in the tens or hundreds usually means the
+    asset is in millimeters — the user should rescale at export time. We
+    only warn (not error) because someone could legitimately ship a meter-
+    scale soft object.
+    """
+    bbox = vertices.max(axis=0) - vertices.min(axis=0)
+    if float(bbox.max()) > _SCALE_WARN_THRESHOLD_M:
+        log.warning(
+            "%s: bbox %s exceeds %.1fm — Newton uses SI units (m). "
+            "If this asset is in mm, rescale with `vertices *= 0.001` "
+            "before saving the npz.",
+            source, tuple(float(x) for x in bbox), _SCALE_WARN_THRESHOLD_M,
+        )
 
 
 # -- yaml parsing ------------------------------------------------------------

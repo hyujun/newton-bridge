@@ -12,6 +12,7 @@ need a real fingertip mesh on disk.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,107 @@ def test_load_npz_empty_arrays(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="vertices is empty"):
         load_softbody_npz(p)
+
+
+# -- sanity checks ----------------------------------------------------------
+
+
+def _capture_softbody_logs() -> tuple[logging.Handler, list[logging.LogRecord]]:
+    """Attach a list-handler directly to the softbody logger.
+
+    pytest's `caplog` fixture relies on propagation to root, which some
+    container logging configs disable. A directly-attached handler captures
+    records regardless. Caller is responsible for `removeHandler` cleanup.
+    """
+    records: list[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _ListHandler(level=logging.WARNING)
+    logger = logging.getLogger("newton_bridge.softbody")
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    return handler, records
+
+
+def test_inverted_tet_is_auto_fixed(tmp_path: Path) -> None:
+    """A tet with negative signed volume should be silently re-oriented and
+    the loader should log a WARNING with the count.
+    """
+    p = tmp_path / "inv.npz"
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    tet_indices = np.array([[0, 2, 1, 3]], dtype=np.int32)  # det < 0
+    np.savez(p, vertices=vertices, tet_indices=tet_indices)
+
+    handler, records = _capture_softbody_logs()
+    try:
+        arr = load_softbody_npz(p)
+    finally:
+        logging.getLogger("newton_bridge.softbody").removeHandler(handler)
+    # After fix: nodes 1↔2 swapped back → original positive orientation.
+    np.testing.assert_array_equal(
+        arr.tet_indices, np.array([[0, 1, 2, 3]], dtype=np.int32)
+    )
+    msgs = [r.getMessage() for r in records]
+    assert any("inverted tet" in m for m in msgs), f"got: {msgs}"
+
+
+def test_disconnected_mesh_is_rejected(tmp_path: Path) -> None:
+    """Two unconnected tets (sharing no vertices) → ValueError."""
+    p = tmp_path / "split.npz"
+    # 8 vertices, 2 tets, no shared vertices → 2 components.
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+            [5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0], [5.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    tet_indices = np.array([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32)
+    np.savez(p, vertices=vertices, tet_indices=tet_indices)
+    with pytest.raises(ValueError, match="disconnected"):
+        load_softbody_npz(p)
+
+
+def test_suspicious_scale_warns(tmp_path: Path) -> None:
+    """Mesh in mm (bbox = 10m equivalent) should WARN, not fail."""
+    p = tmp_path / "big.npz"
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        dtype=np.float32,
+    )
+    tet_indices = np.array([[0, 1, 2, 3]], dtype=np.int32)
+    np.savez(p, vertices=vertices, tet_indices=tet_indices)
+
+    handler, records = _capture_softbody_logs()
+    try:
+        arr = load_softbody_npz(p)
+    finally:
+        logging.getLogger("newton_bridge.softbody").removeHandler(handler)
+    assert arr.vertex_count == 4  # load succeeds
+    msgs = [r.getMessage() for r in records]
+    assert any("bbox" in m and "SI" in m for m in msgs), f"got: {msgs}"
+
+
+def test_normal_mesh_no_warnings(tmp_path: Path) -> None:
+    """The canonical positive-orientation tet must load cleanly: no
+    inverted-fix log, no scale warning.
+    """
+    p = tmp_path / "ok.npz"
+    _write_minimal_npz(p)
+    handler, records = _capture_softbody_logs()
+    try:
+        load_softbody_npz(p)
+    finally:
+        logging.getLogger("newton_bridge.softbody").removeHandler(handler)
+    msgs = [r.getMessage() for r in records]
+    assert not any("inverted" in m for m in msgs), msgs
+    assert not any("bbox" in m for m in msgs), msgs
 
 
 # -- spec parser -------------------------------------------------------------
