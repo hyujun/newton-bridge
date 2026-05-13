@@ -345,11 +345,11 @@ ros2 topic pub -1 /joint_command sensor_msgs/msg/JointState \
 
 ### Telemetry status line 이 안 보임
 
-1Hz `[INFO] [newton_bridge]: ... step ...Hz | ... | state=RUNNING` 한 줄도 안 나오는 경우.
+`[INFO] [newton_bridge]: ... step ...Hz | ... | state=RUNNING` 한 줄도 안 나오는 경우.
 
 **확인 순서**:
 
-1. `STATUS_LOG_HZ` 가 0 아닌지: `docker compose exec sim env | grep STATUS_LOG_HZ`. 기본 `1.0` 이고, `0` 으로 두면 의도적으로 꺼집니다.
+1. `STATUS_LOG_HZ` 가 켜져 있는지: `docker compose exec sim env | grep STATUS_LOG_HZ`. **기본 `0` = 비활성**이므로, 보고 싶으면 `STATUS_LOG_HZ=1.0` 같은 양수로 설정해야 합니다.
 2. `LOG_LEVEL` 이 `INFO` 이하인지: `WARNING` 이상이면 INFO 라인이 드롭되고 STALL 상태에서만 WARN 한 줄이 나옵니다. 평소에 안 보이는 게 정상이라면 RUNNING 이라는 뜻.
 3. 위 두 가지가 정상인데도 안 나온다면 stdlib `logging` root handler 가 깔려있는지: bridge 가 `_configure_logging()` 에서 `basicConfig(stream=sys.stderr)` 를 호출합니다. 외부 코드 (예: `import` 시점에 미리 `logging.basicConfig` 호출) 가 먼저 가져갔다면 무시됩니다 — `force=True` 가 아닌 한 한 번 등록된 handler 가 우선.
 

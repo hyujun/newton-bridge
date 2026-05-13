@@ -6,7 +6,7 @@ Reads env:
                     accepted with a deprecation warning and treated as "sync".
     FREERUN_RATE    realtime | max (freerun only, default realtime)
     VIEWER          gl | rerun | usd | file | null | none (default gl)
-    STATUS_LOG_HZ   1Hz status line cadence (default 1.0; 0 disables)
+    STATUS_LOG_HZ   1Hz status line cadence (default 0 = off; set e.g. 1.0 to enable)
     LOG_LEVEL       stdlib logging level (default INFO; DEBUG/WARNING/ERROR)
     NEWTON_BRIDGE_PUBLISH_TF
                     1/true/on or 0/false/off — overrides pack ros.publish_tf.
@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     # up alongside other bridge logs (and at WARN on STALL). Has to happen
     # after node construction since rclpy logger lookup needs the node.
     node.status_logger = StatusLogger(
-        period_s=_env_float("STATUS_LOG_HZ", 1.0),
+        period_s=_env_float("STATUS_LOG_HZ", 0.0),
         logger=_ros_logger_emit(node),
     )
     node.ready_log_info = (

@@ -55,7 +55,7 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 
 | 변수 | 기본 | 허용값 | 설명 |
 |---|---|---|---|
-| `STATUS_LOG_HZ` | `1.0` | float | 1Hz 기본 상태 라인 cadence (ROS 로거로 emit). `0` 이면 비활성. STALL 상태일 때 자동으로 WARN 레벨로 승격됩니다. |
+| `STATUS_LOG_HZ` | `0` | float | 상태 라인 cadence (Hz, ROS 로거로 emit). 기본 `0` = 비활성. 켜려면 `1.0` 같은 양수 값. 활성 시 STALL 상태에서 자동으로 WARN 레벨로 승격됩니다. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` | stdlib `logging` root 레벨. `DEBUG` 로 내리면 viewer thread 의 진단 메시지까지 보입니다. |
 
 `/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`) 는 항상 1Hz 로 게시되며, 비활성화 환경 변수는 없습니다. 자세한 토픽 내용은 [§Telemetry & 진단](#telemetry--진단) 참조.
@@ -430,13 +430,13 @@ Viewer 가 별도 thread 에서 도는 환경에서 "viewer 가 그려지고 있
 | `STALL` | `time_since_step > max(0.5s, 50 × physics_dt)` 또는 sync 모드에서 cmd_hz>0 인데 step_hz==0 이 1초 넘게 지속. 비정상 |
 | `RUNNING` | 그 외 |
 
-### 출력 채널 (모두 기본 ON)
+### 출력 채널
 
-1. **Terminal** (1Hz, ROS 로거 경유) — `STATUS_LOG_HZ` 로 cadence 조절. STALL 일 때 자동으로 WARN 레벨로 emit:
+1. **Terminal** (ROS 로거 경유) — `STATUS_LOG_HZ` 로 켜고 cadence 조절. **기본 비활성** (`STATUS_LOG_HZ=0`); 켜려면 `STATUS_LOG_HZ=1.0` 같은 양수. 활성 시 STALL 일 때 자동으로 WARN 레벨로 emit:
    ```
    [INFO] [newton_bridge]: [newton_bridge] sim 12.34s | step 240Hz (rt 1.00) | cmd 100Hz | pub 100Hz | render 60Hz | state=RUNNING
    ```
-   안 보이면 `LOG_LEVEL` (root stdlib logger) 가 `INFO` 위인지, 또는 `STATUS_LOG_HZ=0` 으로 꺼져있는지 확인하세요.
+   켰는데도 안 보이면 `LOG_LEVEL` (root stdlib logger) 가 `INFO` 위인지 확인하세요.
 2. **Viewer overlay**
    - **GL** (`VIEWER=gl`): imgui 통계 패널에 sim/step/cmd/pub/render Hz + state 6줄. STALL 빨강 / IDLE 노랑 / RUNNING 초록 컬러 코딩.
    - **Rerun** (`VIEWER=rerun`): `telemetry/{step,cmd,pub,render}_hz` 와 `telemetry/realtime_factor` scalar 시계열. 웹 UI 의 timeseries 패널에 자동 표시.
