@@ -80,6 +80,9 @@ class SimBridgeNode(Node):
         self._joint_names: list[str] = list(self.pack["joint_names"])
 
         # Telemetry — created here if caller didn't pass one (eases tests).
+        # sync_timeout_ms is injected into ros_cfg by __main__.py from
+        # config.yaml; the fallback (100) only matters if SimBridgeNode is
+        # built directly without going through main() (e.g. in unit tests).
         self.telemetry = telemetry or TelemetryRegistry(
             physics_dt=world.physics_dt,
             sync_mode=(sync_mode == "sync"),

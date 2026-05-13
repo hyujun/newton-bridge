@@ -1,104 +1,90 @@
-"""Viewer factory (Phase 7).
+"""Viewer factory (Phase 7, revised in Phase 8).
 
-`VIEWER` env var picks which Newton viewer to attach. Default is **gl**
-(native X11 window with HUD + right-drag picking; needs DISPLAY + nvidia GL,
-which `scripts/host/run.sh` already wires through). The legacy
-`ENABLE_VIEWER=1` variable is rejected with a migration hint.
+Viewer settings live in `config/config.yaml` (see `config.py`). This module
+just dispatches to the right Newton viewer with the resolved cfg dict.
 
 Supported modes:
     gl       newton.viewer.ViewerGL     X11 window (needs DISPLAY + nvidia GL)
-    rerun    newton.viewer.ViewerRerun  web UI on RERUN_WEB_PORT (default 9090)
-    usd      newton.viewer.ViewerUSD    writes USD to workspace/runs/<ts>.usd
-    file     newton.viewer.ViewerFile   records to workspace/runs/<ts>.nvpr
+    rerun    newton.viewer.ViewerRerun  web UI on rerun.web_port (default 9090)
+    usd      newton.viewer.ViewerUSD    writes USD to viewer.output_dir/<ts>.usd
+    file     newton.viewer.ViewerFile   records to viewer.output_dir/<ts>.nvpr
     null     newton.viewer.ViewerNull   no output (benchmarking)
     none     no viewer at all           (explicitly disable)
 
-All Newton imports are lazy to keep headless runs (VIEWER=none) from
+All Newton imports are lazy to keep headless runs (mode='none') from
 pulling GL / Rerun / USD dependencies.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import os
 from pathlib import Path
 
 
 VALID_MODES = {"rerun", "gl", "usd", "file", "null", "none"}
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
-
-
-def _ts_output(ext: str) -> str:
-    """Timestamped path under workspace/runs/<UTC>.ext."""
-    root = Path(os.environ.get("VIEWER_OUTPUT_DIR", "/workspace/workspace/runs"))
+def _ts_output(output_dir: str, ext: str) -> str:
+    root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     return str(root / f"sim_{ts}.{ext}")
 
 
-def resolve_mode() -> str:
-    """Read VIEWER env; reject the deprecated ENABLE_VIEWER."""
-    if os.environ.get("ENABLE_VIEWER", "").strip().lower() in {"1", "true", "yes", "on"}:
-        raise SystemExit(
-            "[newton_bridge] ENABLE_VIEWER was removed in Phase 7. "
-            "Use VIEWER=gl (default) | rerun | usd | file | null | none instead."
-        )
-    mode = os.environ.get("VIEWER", "gl").strip().lower()
+def build_viewer(world, viewer_cfg: dict):
+    """Dispatch to the right Newton viewer; returns None for mode='none'.
+
+    `viewer_cfg` is the resolved `viewer:` subtree of config.py output.
+    """
+    mode = viewer_cfg["mode"]
     if mode not in VALID_MODES:
         raise SystemExit(
-            f"[newton_bridge] unknown VIEWER={mode!r}. "
+            f"[newton_bridge] unknown viewer mode={mode!r}. "
             f"expected one of {sorted(VALID_MODES)}"
         )
-    return mode
-
-
-def build_viewer(world, mode: str | None = None):
-    """Dispatch to the right Newton viewer; returns None for mode='none'."""
-    mode = mode or resolve_mode()
 
     if mode == "none":
         return None
 
     if mode == "gl":
         from newton.viewer import ViewerGL
-        width = _env_int("VIEWER_WIDTH", 1280)
-        height = _env_int("VIEWER_HEIGHT", 720)
-        v = ViewerGL(width=width, height=height, vsync=False)
+        v = ViewerGL(
+            width=int(viewer_cfg["width"]),
+            height=int(viewer_cfg["height"]),
+            vsync=bool(viewer_cfg["gl"]["vsync"]),
+        )
         v.set_model(world.model)
         return v
 
     if mode == "rerun":
         from newton.viewer import ViewerRerun
+        rr = viewer_cfg["rerun"]
         v = ViewerRerun(
-            app_id=os.environ.get("RERUN_APP_ID", "newton_bridge"),
+            app_id=rr["app_id"],
             serve_web_viewer=True,
-            web_port=_env_int("RERUN_WEB_PORT", 9090),
-            grpc_port=_env_int("RERUN_GRPC_PORT", 9876),
-            record_to_rrd=os.environ.get("RERUN_RECORD_TO") or None,
+            web_port=int(rr["web_port"]),
+            grpc_port=int(rr["grpc_port"]),
+            record_to_rrd=rr["record_to_rrd"] or None,
         )
         v.set_model(world.model)
         return v
 
     if mode == "usd":
         from newton.viewer import ViewerUSD
-        out = os.environ.get("VIEWER_OUTPUT_PATH") or _ts_output("usd")
+        usd = viewer_cfg["usd"]
+        out = usd["output_path"] or _ts_output(viewer_cfg["output_dir"], "usd")
         v = ViewerUSD(
             output_path=out,
-            fps=_env_int("VIEWER_FPS", 60),
-            up_axis=os.environ.get("VIEWER_UP_AXIS", "Z"),
+            fps=int(usd["fps"]),
+            up_axis=usd["up_axis"],
         )
         v.set_model(world.model)
         return v
 
     if mode == "file":
         from newton.viewer import ViewerFile
-        out = os.environ.get("VIEWER_OUTPUT_PATH") or _ts_output("nvpr")
+        f = viewer_cfg["file"]
+        out = f["output_path"] or _ts_output(viewer_cfg["output_dir"], "nvpr")
         v = ViewerFile(output_path=out, auto_save=True)
         v.set_model(world.model)
         return v

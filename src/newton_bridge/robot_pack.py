@@ -163,13 +163,10 @@ def load_pack(pack_dir: Path) -> dict:
     scene = copy.deepcopy(scene)
     scene.setdefault("sim", {})
     scene.setdefault("ros", {})
-    # Defaults injected here so downstream readers don't re-encode them.
-    # viewer_hz: target viewer FPS in **wall-clock** time (decoupled from
-    # physics_hz and command rate). 0/None disables throttling.
-    # sync_timeout_ms: in sync mode, republish last state if no /joint_command
-    # arrives within this window.
-    scene["sim"].setdefault("viewer_hz", 60)
-    scene["ros"].setdefault("sync_timeout_ms", 100)
+    # viewer_hz / sync_timeout_ms used to be setdefault'd here. They moved to
+    # config/config.yaml in Phase 8 — `__main__.py` injects the resolved values
+    # into scene['sim']/scene['ros'] before the node is built. Pack yaml no
+    # longer carries them; do not re-introduce a setdefault here.
     _validate_scene(scene, pack_dir)
     _flatten_primary_aliases(scene)
     scene["_pack_dir"] = pack_dir

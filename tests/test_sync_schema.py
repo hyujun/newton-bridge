@@ -1,6 +1,9 @@
-"""Sync-mode schema defaults: viewer_hz, sync_timeout_ms.
+"""Sync-mode schema: viewer_hz / sync_timeout_ms ownership moved to config.yaml.
 
-Newton-free — exercises only the yaml -> dict defaulting path.
+Before Phase 8, robot_pack.load_pack() injected defaults for these two keys.
+They are now config-yaml only — pack yaml does NOT carry them, and __main__.py
+injects the resolved config values into the pack dict at start (see
+src/newton_bridge/__main__.py). publish_tf stays a per-pack policy.
 """
 
 from __future__ import annotations
@@ -8,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from newton_bridge.robot_pack import load_pack
 
@@ -17,10 +19,11 @@ ROBOTS = REPO_ROOT / "robots"
 
 
 @pytest.mark.parametrize("name", ["ur5e", "franka", "kuka_iiwa_14"])
-def test_defaults_injected(name: str) -> None:
+def test_viewer_hz_and_sync_timeout_not_injected_by_pack(name: str) -> None:
+    """Pack loader must not inject session knobs — config.yaml owns them."""
     cfg = load_pack(ROBOTS / name)
-    assert cfg["sim"]["viewer_hz"] == 60
-    assert cfg["ros"]["sync_timeout_ms"] == 100
+    assert "viewer_hz" not in cfg["sim"]
+    assert "sync_timeout_ms" not in cfg["ros"]
 
 
 @pytest.mark.parametrize("name", ["ur5e", "franka", "kuka_iiwa_14"])
@@ -34,36 +37,3 @@ def test_publish_tf_key_present(name: str) -> None:
     assert isinstance(cfg["ros"]["publish_tf"], bool)
     assert isinstance(cfg["ros"]["tf_root_frame"], str)
     assert isinstance(cfg["ros"]["publish_frames"], list)
-
-
-def test_explicit_values_preserved(tmp_path: Path) -> None:
-    pack = tmp_path / "custom"
-    (pack / "models").mkdir(parents=True)
-    (pack / "models" / "x.urdf").write_text("<robot name='x'/>")
-    (pack / "robot.yaml").write_text(yaml.safe_dump({
-        "robot": {"source": "urdf", "source_rel": "models/x.urdf"},
-        "sim": {"physics_hz": 500, "viewer_hz": 30},
-        "joint_names": ["j1"],
-        "ros": {
-            "joint_states_topic": "/joint_states",
-            "joint_command_topic": "/joint_command",
-            "sync_timeout_ms": 250,
-        },
-    }))
-    cfg = load_pack(pack)
-    assert cfg["sim"]["viewer_hz"] == 30
-    assert cfg["ros"]["sync_timeout_ms"] == 250
-
-
-def test_zero_viewer_hz_passes_through(tmp_path: Path) -> None:
-    pack = tmp_path / "custom"
-    (pack / "models").mkdir(parents=True)
-    (pack / "models" / "x.urdf").write_text("<robot name='x'/>")
-    (pack / "robot.yaml").write_text(yaml.safe_dump({
-        "robot": {"source": "urdf", "source_rel": "models/x.urdf"},
-        "sim": {"physics_hz": 500, "viewer_hz": 0},
-        "joint_names": ["j1"],
-        "ros": {"joint_states_topic": "/a", "joint_command_topic": "/b"},
-    }))
-    cfg = load_pack(pack)
-    assert cfg["sim"]["viewer_hz"] == 0

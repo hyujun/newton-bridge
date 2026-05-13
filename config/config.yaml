@@ -1,0 +1,45 @@
+# newton-bridge session config.
+#
+# Precedence: CLI flag > env var > this file > code defaults (config.py:_DEFAULTS).
+# Pack-level robot.yaml owns robot facts (joints, drives, gravity); this file
+# owns session/runtime knobs. Two values here (sim.viewer_hz, sim.sync_timeout_ms)
+# are injected into the pack dict at start so node.py/viewer_thread.py can keep
+# their existing access pattern.
+#
+# ROS/DDS infra (ROBOT_PACK, ROS_DOMAIN_ID, RMW_IMPLEMENTATION, FastDDS knobs)
+# stays env-only — see docker/compose.yml and scripts/host/run.sh.
+
+sim:
+  sync_mode: freerun        # freerun | sync   (CLI: --sync / --freerun)
+  freerun_rate: realtime    # realtime | max   (CLI: --freerun-rate)
+  status_log_hz: 0.0        # 1Hz stderr status line cadence; 0 = off
+                            # (CLI: --status-log-hz, env: STATUS_LOG_HZ)
+  viewer_hz: 60             # viewer thread wall-clock FPS; 0 = every tick
+  sync_timeout_ms: 100      # sync mode: republish if no /joint_command within this window
+
+logging:
+  level: INFO               # DEBUG | INFO | WARNING | ERROR   (CLI: --log-level)
+
+viewer:
+  mode: gl                  # gl | rerun | usd | file | null | none   (CLI: --viewer)
+  width: 1280               # ViewerGL window width                   (CLI: --viewer-width)
+  height: 720               # ViewerGL window height                  (CLI: --viewer-height)
+  output_dir: /workspace/workspace/runs   # USD/file recordings land here
+  ready_timeout_s: 60.0     # wait_ready budget; cold-boot raycast kernel compile ~11s
+
+  gl:
+    vsync: false            # disable for max throughput; enable to avoid tearing
+
+  rerun:
+    app_id: newton_bridge
+    web_port: 9090          # web UI port (network_mode:host → host-accessible)
+    grpc_port: 9876         # gRPC port (paste rerun+http://localhost:9876/proxy)
+    record_to_rrd: null     # path to also record an .rrd file
+
+  usd:
+    fps: 60
+    up_axis: Z
+    output_path: null       # null = timestamped under output_dir
+
+  file:
+    output_path: null       # null = timestamped under output_dir

@@ -1,21 +1,22 @@
 """`python -m newton_bridge` entry point.
 
-Reads env:
-    ROBOT_PACK      container path to robots/<name>/ (default /workspace/robots/ur5e)
-    SYNC_MODE       freerun | sync (default freerun). Legacy "handshake" is
-                    accepted with a deprecation warning and treated as "sync".
-    FREERUN_RATE    realtime | max (freerun only, default realtime)
-    VIEWER          gl | rerun | usd | file | null | none (default gl)
-    STATUS_LOG_HZ   1Hz status line cadence (default 0 = off; set e.g. 1.0 to enable)
-    LOG_LEVEL       stdlib logging level (default INFO; DEBUG/WARNING/ERROR)
-    NEWTON_BRIDGE_PUBLISH_TF
-                    1/true/on or 0/false/off — overrides pack ros.publish_tf.
-                    Equivalent to --publish-tf / --no-publish-tf.
+Session config (sync mode, viewer, status log cadence, etc.) is resolved by
+`config.py` with precedence **CLI > env > config/config.yaml > code default**.
+Pack-level `robots/<name>/robot.yaml` keeps robot facts (joints, drives,
+gravity); it does **not** carry session knobs.
 
-CLI flags:
-    --publish-tf / --no-publish-tf
-                    Override pack ros.publish_tf. Highest precedence; falls
-                    back to env var, then yaml, then default true.
+Two values from `config.yaml` are injected into the pack dict before the node
+is built so downstream readers keep their existing access pattern:
+    pack['sim']['viewer_hz']        <- config.yaml sim.viewer_hz
+    pack['ros']['sync_timeout_ms']  <- config.yaml sim.sync_timeout_ms
+
+Pack-level `ros.publish_tf` keeps its own precedence chain
+(CLI --publish-tf > NEWTON_BRIDGE_PUBLISH_TF > pack yaml > default True),
+because it's a per-robot policy rather than a session knob.
+
+Environment variables for ROS/DDS plumbing (`ROBOT_PACK`, `ROS_DOMAIN_ID`,
+`RMW_IMPLEMENTATION`, FastDDS toggles) stay env-only — they are container
+infra, not simulator settings.
 """
 
 from __future__ import annotations
@@ -30,12 +31,13 @@ from pathlib import Path
 import warp as wp
 import rclpy
 
+from .config import default_config_path, resolve
 from .robot_pack import load_pack
 from .world import NewtonWorld
 from .node import SimBridgeNode
 from .snapshot import StateSnapshot
 from .telemetry import StatusLogger, TelemetryRegistry
-from .viewer import build_viewer, resolve_mode
+from .viewer import build_viewer
 from .viewer_thread import ViewerThread
 
 
@@ -45,13 +47,6 @@ def _resolve_pack_dir() -> Path:
     if not p.is_dir():
         raise FileNotFoundError(f"ROBOT_PACK not a directory: {p}")
     return p
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
 
 
 def _env_bool(name: str) -> bool | None:
@@ -78,6 +73,37 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description="Newton ↔ ROS 2 bridge entry point.",
     )
     p.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to config yaml (default: config/config.yaml at repo root, "
+        "or /workspace/config/config.yaml in-container).",
+    )
+    sync_group = p.add_mutually_exclusive_group()
+    sync_group.add_argument(
+        "--sync", dest="sync_mode", action="store_const", const="sync", default=None,
+        help="Step physics only on /joint_command (sync mode).",
+    )
+    sync_group.add_argument(
+        "--freerun", dest="sync_mode", action="store_const", const="freerun",
+        help="Step physics continuously (default).",
+    )
+    p.add_argument(
+        "--freerun-rate", choices=["realtime", "max"], default=None,
+        help="freerun pacing (default from config.yaml).",
+    )
+    p.add_argument(
+        "--viewer", choices=sorted({"gl", "rerun", "usd", "file", "null", "none"}),
+        default=None,
+        help="Viewer backend (default from config.yaml).",
+    )
+    p.add_argument("--viewer-width", type=int, default=None)
+    p.add_argument("--viewer-height", type=int, default=None)
+    p.add_argument("--status-log-hz", type=float, default=None,
+                   help="1Hz status line cadence (0 = off).")
+    p.add_argument("--log-level", default=None,
+                   help="stdlib logging level (DEBUG/INFO/WARNING/ERROR).")
+    p.add_argument(
         "--publish-tf",
         dest="publish_tf",
         action=argparse.BooleanOptionalAction,
@@ -88,17 +114,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _configure_logging() -> None:
+def _configure_logging(level_name: str) -> None:
     """Install a stderr handler on the root logger.
 
     Without this, stdlib `logging` drops everything below WARNING (no handler
     means `lastResort` kicks in, which only emits WARN+). The status logger
     in `telemetry.py` uses INFO for healthy ticks, so users would only ever
-    see the line when the pipeline stalled. Also picks up
-    `viewer_thread.log.exception(...)` calls.
+    see the line when the pipeline stalled.
     """
-    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
+    level = getattr(logging, level_name.upper(), logging.INFO)
     logging.basicConfig(
         level=level,
         format="[%(name)s] %(levelname)s: %(message)s",
@@ -107,12 +131,7 @@ def _configure_logging() -> None:
 
 
 def _ros_logger_emit(node):
-    """Adapter from `StatusLogger`'s `(level, msg)` callable to ROS logging.
-
-    StatusLogger uses stdlib level ints (INFO=20, WARNING=30). ROS rclpy
-    loggers expose `.info() / .warn() / .error() / .debug()`. Map by level so
-    STALL lines arrive at WARN and show up in ROS log viewers / bag tooling.
-    """
+    """Adapter from `StatusLogger`'s `(level, msg)` callable to ROS logging."""
     rl = node.get_logger()
 
     def emit(level: int, msg: str) -> None:
@@ -129,29 +148,29 @@ def _ros_logger_emit(node):
 
 
 def main(argv: list[str] | None = None) -> int:
-    _configure_logging()
     args = _parse_args(argv)
+    config_path = args.config if args.config is not None else default_config_path()
+    cfg = resolve(args, config_path)
+
+    _configure_logging(cfg["logging"]["level"])
+
     pack_dir = _resolve_pack_dir()
-    sync_mode = os.environ.get("SYNC_MODE", "freerun").lower()
-    rate_mode = os.environ.get("FREERUN_RATE", "realtime").lower()
-    if sync_mode == "handshake":
-        print(
-            "[newton_bridge] SYNC_MODE=handshake is deprecated; use SYNC_MODE=sync",
-            file=sys.stderr,
-            flush=True,
-        )
-        sync_mode = "sync"
-    if sync_mode not in {"freerun", "sync"}:
-        print(f"[newton_bridge] invalid SYNC_MODE={sync_mode!r}", file=sys.stderr)
-        return 2
+    sync_mode = cfg["sim"]["sync_mode"]
+    rate_mode = cfg["sim"]["freerun_rate"]
+    viewer_cfg = cfg["viewer"]
+    viewer_mode = viewer_cfg["mode"]
 
-    viewer_mode = resolve_mode()  # may SystemExit on bad VIEWER / legacy ENABLE_VIEWER
-
+    print(f"[newton_bridge] config: {config_path if config_path.is_file() else '(defaults)'}", flush=True)
     print(f"[newton_bridge] loading pack: {pack_dir}", flush=True)
     pack = load_pack(pack_dir)
 
-    # publish_tf precedence: CLI > env > yaml > default(True). Resolved here
-    # (not in node.py) so the value passed into the node is the final one.
+    # Inject session values into the pack dict so existing readers
+    # (node.py, viewer_thread.py) keep working without signature changes.
+    pack["sim"]["viewer_hz"] = cfg["sim"]["viewer_hz"]
+    pack["ros"]["sync_timeout_ms"] = cfg["sim"]["sync_timeout_ms"]
+
+    # publish_tf precedence: CLI > env > pack yaml > default(True). Resolved
+    # here (not in node.py) so the value passed into the node is the final one.
     if args.publish_tf is not None:
         pack["ros"]["publish_tf"] = args.publish_tf
     else:
@@ -176,8 +195,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sim_cfg = pack["sim"]
     ros_cfg = pack["ros"]
-    viewer_hz = sim_cfg.get("viewer_hz", 60)
-    sync_timeout_s = float(ros_cfg.get("sync_timeout_ms", 100)) / 1000.0
+    viewer_hz = sim_cfg["viewer_hz"]
+    sync_timeout_s = float(ros_cfg["sync_timeout_ms"]) / 1000.0
 
     telemetry = TelemetryRegistry(
         physics_dt=world.physics_dt,
@@ -192,13 +211,13 @@ def main(argv: list[str] | None = None) -> int:
         if viewer_mode == "none":
             return None
         try:
-            v = build_viewer(world, mode=viewer_mode)
+            v = build_viewer(world, viewer_cfg)
             print(f"[newton_bridge] viewer: {viewer_mode}", flush=True)
             return v
         except Exception as exc:  # noqa: BLE001
             print(
-                f"[newton_bridge] VIEWER={viewer_mode} init failed: {exc!r}\n"
-                f"[newton_bridge] continuing headless. Set VIEWER=none to silence.",
+                f"[newton_bridge] viewer={viewer_mode} init failed: {exc!r}\n"
+                f"[newton_bridge] continuing headless. Set viewer.mode=none to silence.",
                 file=sys.stderr,
                 flush=True,
             )
@@ -208,11 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         snapshot, viewer_factory, viewer_hz=viewer_hz, telemetry=telemetry
     )
     viewer_thread.start()
-    # 60s: cold runs compile newton._src.geometry.raycast (~11s on a 3070 Ti)
-    # inside the viewer factory before ready_event fires. A 10s budget timed
-    # out on first launch, leaving get_viewer()==None and right-drag picking
-    # silently disabled. Warm runs return in <1s.
-    viewer_thread.wait_ready(timeout=60.0)
+    # Cold runs compile newton._src.geometry.raycast (~11s on a 3070 Ti)
+    # inside the viewer factory before ready_event fires. ready_timeout_s
+    # in config.yaml (default 60.0) covers that; warm runs return in <1s.
+    viewer_thread.wait_ready(timeout=float(viewer_cfg["ready_timeout_s"]))
     if viewer_thread.build_error is not None:
         # build_error already printed by the factory; thread will idle.
         pass
@@ -249,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     # up alongside other bridge logs (and at WARN on STALL). Has to happen
     # after node construction since rclpy logger lookup needs the node.
     node.status_logger = StatusLogger(
-        period_s=_env_float("STATUS_LOG_HZ", 0.0),
+        period_s=float(cfg["sim"]["status_log_hz"]),
         logger=_ros_logger_emit(node),
     )
     node.ready_log_info = (
