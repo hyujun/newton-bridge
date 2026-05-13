@@ -21,7 +21,10 @@ print(devs)
 banner "2. Newton version"
 run "newton module import" python3 -c "
 import newton
-print('newton', getattr(newton, '__version__', '<unknown>'))
+v = getattr(newton, '__version__', '<unknown>')
+print('newton', v)
+# Dockerfile pins newton>=1.2.0,<1.3. Hard-fail if the image drifted off-range.
+assert v != '<unknown>' and v.startswith('1.2.'), f'expected newton 1.2.x, got {v!r}'
 "
 
 banner "3. newton.examples registry"
@@ -216,11 +219,13 @@ import warp as wp; wp.init()
 from pathlib import Path
 from newton_bridge.robot_pack import load_pack
 from newton_bridge.world import NewtonWorld
-from newton_bridge.sensors import build_sensors, contact_force_vec3
+from newton_bridge.sensors import contact_force_vec3
 
 pack = load_pack(Path(os.environ['ROBOT_PACK']))
 # Inject a sensors block at runtime (simulates a scene.yaml with Phase 5
 # sensors). Body label includes articulation prefix, so use a glob.
+# Newton 1.2.0: SensorContact must be built BEFORE model.contacts(); inject
+# the sensors block first so NewtonWorld picks it up during __init__.
 pack["sensors"] = {
     "contact": [
         {"label": "base", "bodies": ["*base_link*"],
@@ -229,7 +234,7 @@ pack["sensors"] = {
     ],
 }
 world = NewtonWorld(pack)
-bundle = build_sensors(pack, world.model)
+bundle = world.sensors
 assert len(bundle.contact) == 1 and bundle.contact[0].label == "base"
 
 # Step + update sensor

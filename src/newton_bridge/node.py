@@ -49,7 +49,6 @@ from .telemetry import (
 )
 from .sensors import (
     SensorBundle,
-    build_sensors,
     contact_force_vec3,
     imu_readings,
 )
@@ -128,7 +127,9 @@ class SimBridgeNode(Node):
         # service can flip without rebuilding QoS/discovery state.
         self.pub_tf = self.create_publisher(TFMessage, "/tf", qos)
 
-        self.sensors: SensorBundle = build_sensors(self.pack, world.model)
+        # Sensors are built inside NewtonWorld (Newton 1.2.0 requires
+        # SensorContact to be created before model.contacts()).
+        self.sensors: SensorBundle = world.sensors
         self._contact_pubs = {
             spec.label: self.create_publisher(WrenchStamped, spec.topic, qos)
             for spec in self.sensors.contact

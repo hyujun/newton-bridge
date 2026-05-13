@@ -16,6 +16,7 @@ import warp as wp
 import newton
 from newton.selection import ArticulationView
 
+from .sensors import SensorBundle, build_sensors
 from .softbody import SoftbodySpec, load_softbody_npz, parse_softbodies
 
 log = logging.getLogger(__name__)
@@ -93,6 +94,12 @@ class NewtonWorld:
         self._build_model()
         self._build_solver()
         self._build_view()
+        # Newton 1.2.0: SensorContact must be constructed BEFORE model.contacts()
+        # so the sensor can request the `force` field on the contacts buffer.
+        # Constructing the other order raises
+        #   "SensorContact requires a Contacts object with `force` allocated."
+        # at sensor.update() time.
+        self.sensors: SensorBundle = build_sensors(pack, self.model)
         # Pre-allocate the contacts buffer so model.collide() can write
         # in-place. Mandatory for CUDA graph capture (graphs cannot allocate).
         # Sensors read this same buffer via self.last_contacts.

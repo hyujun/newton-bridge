@@ -87,12 +87,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 #   - notebook: Jupyter + Rerun visualizer
 #   - dev: test / lint tooling
 RUN pip install --no-cache-dir \
-        "newton[examples,notebook,dev]"
+        "newton[examples,notebook,dev]>=1.2.0,<1.3"
 
 # torch-cu12 lives on PyTorch's CUDA wheel index — install in a separate layer
 # so a re-pull doesn't re-download the ~2GB torch wheels unless this line changes.
 RUN pip install --no-cache-dir \
-        "newton[torch-cu12]" \
+        "newton[torch-cu12]>=1.2.0,<1.3" \
         --extra-index-url https://download.pytorch.org/whl/cu128
 
 # resolve-robotics-uri-py lets newton's URDF importer resolve `package://` mesh
