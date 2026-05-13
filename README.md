@@ -34,9 +34,9 @@
 ./scripts/host/fetch_assets.sh        # mujoco_menagerie + ur5e URDF 다운로드 (예시 pack 채우기)
 ./scripts/host/build.sh               # Docker 이미지 빌드 (5~15분)
 ./scripts/host/run.sh verify          # 컨테이너 스모크 테스트
-./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, VIEWER=rerun → http://localhost:9090
-VIEWER=gl ./scripts/host/run.sh sim   # Newton GL viewer 창 (X11 필요)
-VIEWER=none ./scripts/host/run.sh sim # headless
+./scripts/host/run.sh sim             # ROBOT=ur5e, freerun, VIEWER=gl → 네이티브 창 (X11 + nvidia GL)
+VIEWER=rerun ./scripts/host/run.sh sim # 헤드리스 웹 뷰어 → http://localhost:9090
+VIEWER=none ./scripts/host/run.sh sim  # headless
 
 # 호스트의 외부 robot_description 폴더 직접 사용 (URDF only):
 EXTERNAL_PACK_HOST=$HOME/my_robot_description ./scripts/host/run.sh sim
@@ -53,8 +53,9 @@ EXTERNAL_PACK_HOST=$HOME/my_robot_description ./scripts/host/run.sh sim
 > 추가 설치. **NVIDIA driver 는 감지만 하고 설치하지 않음** — 없으면
 > `sudo ubuntu-drivers autoinstall && sudo reboot` 후 재실행.
 
-> **Viewer 선택** (`VIEWER` env): `rerun` (기본, 웹 UI @ `http://localhost:9090`,
-> X11 불필요) · `gl` (X11 passthrough + nvidia GL 드라이버 필요, 창 닫으면 sim 종료) ·
+> **Viewer 선택** (`VIEWER` env): `gl` (기본, X11 passthrough + nvidia GL 드라이버 필요,
+> 우클릭 드래그로 link 에 spring force 인가, 창 닫으면 sim 종료) ·
+> `rerun` (헤드리스 웹 UI @ `http://localhost:9090`, X11 불필요) ·
 > `usd` / `file` (`workspace/runs/<ts>.{usd,nvpr}` 로 녹화) · `null` (벤치마크) · `none`.
 > `sync` 모드에서는 `/joint_command` 수신 시에만 step 이 진행됩니다. Viewer 는 별도 thread 에서 `sim.viewer_hz` (기본 60Hz) 로 wall-clock pacing — physics/cmd rate 와 독립이고, sync 모드 idle 중에도 마지막 snapshot 을 60Hz 로 계속 redraw 하므로 창이 얼어붙지 않습니다. 시뮬 헬스는 1Hz `[newton_bridge] step ... cmd ... state=...` stderr 라인 + `/sim/diagnostics` 토픽으로 노출.
 

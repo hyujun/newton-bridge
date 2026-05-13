@@ -1,12 +1,13 @@
 """Viewer factory (Phase 7).
 
-`VIEWER` env var picks which Newton viewer to attach. Default is **rerun**
-(web UI on host port 9090, no X11 required). The legacy `ENABLE_VIEWER=1`
-variable is rejected with a migration hint.
+`VIEWER` env var picks which Newton viewer to attach. Default is **gl**
+(native X11 window with HUD + right-drag picking; needs DISPLAY + nvidia GL,
+which `scripts/host/run.sh` already wires through). The legacy
+`ENABLE_VIEWER=1` variable is rejected with a migration hint.
 
 Supported modes:
-    rerun    newton.viewer.ViewerRerun  web UI on RERUN_WEB_PORT (default 9090)
     gl       newton.viewer.ViewerGL     X11 window (needs DISPLAY + nvidia GL)
+    rerun    newton.viewer.ViewerRerun  web UI on RERUN_WEB_PORT (default 9090)
     usd      newton.viewer.ViewerUSD    writes USD to workspace/runs/<ts>.usd
     file     newton.viewer.ViewerFile   records to workspace/runs/<ts>.nvpr
     null     newton.viewer.ViewerNull   no output (benchmarking)
@@ -46,9 +47,9 @@ def resolve_mode() -> str:
     if os.environ.get("ENABLE_VIEWER", "").strip().lower() in {"1", "true", "yes", "on"}:
         raise SystemExit(
             "[newton_bridge] ENABLE_VIEWER was removed in Phase 7. "
-            "Use VIEWER=rerun (default) | gl | usd | file | null | none instead."
+            "Use VIEWER=gl (default) | rerun | usd | file | null | none instead."
         )
-    mode = os.environ.get("VIEWER", "rerun").strip().lower()
+    mode = os.environ.get("VIEWER", "gl").strip().lower()
     if mode not in VALID_MODES:
         raise SystemExit(
             f"[newton_bridge] unknown VIEWER={mode!r}. "

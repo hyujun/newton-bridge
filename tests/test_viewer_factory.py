@@ -7,10 +7,10 @@ import pytest
 from newton_bridge.viewer import VALID_MODES, resolve_mode
 
 
-def test_default_mode_is_rerun(monkeypatch):
+def test_default_mode_is_gl(monkeypatch):
     monkeypatch.delenv("VIEWER", raising=False)
     monkeypatch.delenv("ENABLE_VIEWER", raising=False)
-    assert resolve_mode() == "rerun"
+    assert resolve_mode() == "gl"
 
 
 @pytest.mark.parametrize("m", sorted(VALID_MODES))

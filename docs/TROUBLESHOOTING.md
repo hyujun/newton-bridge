@@ -362,7 +362,7 @@ Viewer overlay (GL imgui 패널 / Rerun timeseries) 도 같이 확인하면 어�
 ### Rerun 웹뷰어가 `http://localhost:9090` 에서 안 뜸
 
 **확인**:
-1. sim 이 `VIEWER=rerun` (기본) 으로 기동되었는지 — `VIEWER=none` 이면 포트가 안 열림
+1. sim 이 `VIEWER=rerun` 으로 기동되었는지 — 기본값은 `gl` 이므로 rerun 웹 UI 가 필요하면 `VIEWER=rerun` 을 명시해야 함. `VIEWER=none` 이면 포트가 안 열림
 2. 포트 충돌 — `ss -lntp | grep 9090`
 3. 원격 머신이면 SSH tunnel 필요 (web + gRPC 둘 다):
    ```bash

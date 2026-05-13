@@ -5,7 +5,7 @@ Reads env:
     SYNC_MODE       freerun | sync (default freerun). Legacy "handshake" is
                     accepted with a deprecation warning and treated as "sync".
     FREERUN_RATE    realtime | max (freerun only, default realtime)
-    VIEWER          rerun | gl | usd | file | null | none (default rerun)
+    VIEWER          gl | rerun | usd | file | null | none (default gl)
     STATUS_LOG_HZ   1Hz status line cadence (default 1.0; 0 disables)
     LOG_LEVEL       stdlib logging level (default INFO; DEBUG/WARNING/ERROR)
     NEWTON_BRIDGE_PUBLISH_TF

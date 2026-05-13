@@ -39,11 +39,12 @@ services:
       - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | sync
       - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
       # -- Viewer selection (Phase 7) --------------------------------------
-      # VIEWER picks which Newton viewer attaches. Default: rerun (web UI on
-      # host:9090 via network_mode:host — no X11 needed). `gl` opens a native
-      # window (X11 passthrough + nvidia GL). `usd`/`file` record to
+      # VIEWER picks which Newton viewer attaches. Default: gl (native X11
+      # window with HUD + right-drag picking; X11 passthrough + nvidia GL).
+      # `rerun` is the headless alternative (web UI on host:9090 via
+      # network_mode:host — no X11 needed). `usd`/`file` record to
       # workspace/runs/. `null` is for benchmarking. `none` disables.
-      - VIEWER=${VIEWER:-rerun}
+      - VIEWER=${VIEWER:-gl}
       - VIEWER_WIDTH=${VIEWER_WIDTH:-1280}
       - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
       - RERUN_WEB_PORT=${RERUN_WEB_PORT:-9090}

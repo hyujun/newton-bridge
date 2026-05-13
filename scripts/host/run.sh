@@ -51,7 +51,7 @@ fi
 : "${FREERUN_RATE:=realtime}"
 : "${ROS_DOMAIN_ID:=0}"
 : "${RMW_IMPLEMENTATION:=rmw_cyclonedds_cpp}"
-: "${VIEWER:=rerun}"
+: "${VIEWER:=gl}"
 export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION VIEWER
 
 # FastDDS only: force UDPv4 because shared-memory transport breaks at the
@@ -126,7 +126,7 @@ env overrides:
   SYNC_MODE=freerun|sync
   FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
-  VIEWER=rerun|gl|usd|file|null|none  (default: rerun — web viewer at http://localhost:9090)
+  VIEWER=gl|rerun|usd|file|null|none  (default: gl — native window with right-drag picking; rerun = web viewer at http://localhost:9090)
 EOF
         exit 1
         ;;

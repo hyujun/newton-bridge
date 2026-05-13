@@ -38,7 +38,7 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 
 | 변수 | 기본 | 허용값 | 설명 |
 |---|---|---|---|
-| `VIEWER` | `rerun` | `rerun` \| `gl` \| `usd` \| `file` \| `null` \| `none` | [§Viewer](#viewer-모드) 참조 |
+| `VIEWER` | `gl` | `gl` \| `rerun` \| `usd` \| `file` \| `null` \| `none` | [§Viewer](#viewer-모드) 참조 |
 | `VIEWER_WIDTH` | `1280` | int | `gl` 창 너비 |
 | `VIEWER_HEIGHT` | `720` | int | `gl` 창 높이 |
 | `VIEWER_FPS` | `60` | int | `usd` 녹화 frame rate |
@@ -480,8 +480,8 @@ Newton 은 world-frame pose 만 제공하므로 현재 구현은 평탄한 `worl
 
 | `VIEWER=` | 출력 | X11 | GL 드라이버 | 비용 | 용도 |
 |---|---|---|---|---|---|
-| `rerun` (기본) | 웹 UI @ `http://localhost:9090` | 불필요 | 불필요 | 중 | 원격/Dev-container, 스크러빙 |
-| `gl` | 호스트 X 창 | 필요 | 필요 | 높음 | 로컬 워크스테이션, 인터랙션 (카메라 drag) |
+| `gl` (기본) | 호스트 X 창 | 필요 | 필요 | 높음 | 로컬 워크스테이션, 인터랙션 (카메라 drag, right-drag picking) |
+| `rerun` | 웹 UI @ `http://localhost:9090` | 불필요 | 불필요 | 중 | 원격/Dev-container, 스크러빙 |
 | `usd` | `workspace/runs/sim_<ts>.usd` | 불필요 | 불필요 | 저 (녹화) | Omniverse 로 옮겨서 분석 |
 | `file` | `workspace/runs/sim_<ts>.nvpr` | 불필요 | 불필요 | 저 (녹화) | Newton 자체 replay |
 | `null` | 무출력 (팩토리만 dispatch) | 불필요 | 불필요 | ~0 | 벤치마크 (pure sim cost 측정) |
@@ -489,7 +489,7 @@ Newton 은 world-frame pose 만 제공하므로 현재 구현은 평탄한 `worl
 
 `none` 과 `null` 의 차이: `null` 은 매 frame `ViewerNull.log_state()` 가 호출됨 (작은 overhead). `none` 은 viewer 객체 자체를 만들지 않음.
 
-### `rerun` (기본) — 웹 UI
+### `rerun` — 웹 UI
 
 ```bash
 ./scripts/host/run.sh sim       # 브라우저: http://localhost:9090
@@ -509,11 +509,11 @@ ViewerRerun 의 web UI(9090) 와 데이터 스트림(gRPC 9876) 이 별도 포�
 - 동시 녹화: `RERUN_RECORD_TO=/workspace/workspace/runs/session.rrd ./scripts/host/run.sh sim` → 호스트에서 `rerun workspace/runs/session.rrd` 로 재생
 - 포트 충돌: `RERUN_WEB_PORT=9091 RERUN_GRPC_PORT=9877 ./scripts/host/run.sh sim` → Connection URL 도 `rerun+http://localhost:9877/proxy` 로 맞춰서 입력
 
-### `gl` — 네이티브 X11 창
+### `gl` (기본) — 네이티브 X11 창
 
 ```bash
-VIEWER=gl ./scripts/host/run.sh sim
-VIEWER=gl VIEWER_WIDTH=1920 VIEWER_HEIGHT=1080 ./scripts/host/run.sh sim
+./scripts/host/run.sh sim                            # VIEWER=gl 기본
+VIEWER_WIDTH=1920 VIEWER_HEIGHT=1080 ./scripts/host/run.sh sim
 ```
 
 prereq: 호스트 X 서버 (Wayland 도 XWayland 로 OK), `DISPLAY` 세팅, nvidia GL + `NVIDIA_DRIVER_CAPABILITIES=...graphics,display`. `run.sh` 가 `xhost +local:docker` 자동 실행.
@@ -533,7 +533,7 @@ prereq: 호스트 X 서버 (Wayland 도 XWayland 로 OK), `DISPLAY` 세팅, nvid
 - **Picking GUI (right-drag)** — Newton 내장 spring-damper 가 잡은 body 의 `state.body_f` 에 wrench 를 누적. `newton_bridge.picking_overlay.PickingOverlay` 가 매 frame
   - 선택된 body 에 속한 모든 shape (box/sphere/capsule/cylinder/ellipsoid/mesh) 의 wireframe 을 RGB `(1,0,1)` 마젠타로 overlay
   - stats 패널에 link 이름과 `\|F\|` (N), `\|t\|` (Nm) 표시
-  - 비 GL 뷰어 (Rerun/USD/File/Null) 에서는 picking 인터페이스 자체가 없어서 silently no-op. 진짜 wrench 인가가 필요하면 `VIEWER=gl` 필수.
+  - 비 GL 뷰어 (Rerun/USD/File/Null) 에서는 picking 인터페이스 자체가 없어서 silently no-op. 진짜 wrench 인가가 필요하면 `VIEWER=gl` 필수 (기본값).
 - 실패 모드: X socket 접근 불가 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참조.
 
 ### `usd` / `file` — 녹화

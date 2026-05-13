@@ -8,7 +8,7 @@
 
 | Mode | 용도 | 기본값 |
 |---|---|---|
-| `sim` / (생략) | sim 프로세스 기동 (`python -m newton_bridge`) | `ROBOT=ur5e`, `SYNC_MODE=freerun`, `VIEWER=rerun` |
+| `sim` / (생략) | sim 프로세스 기동 (`python -m newton_bridge`) | `ROBOT=ur5e`, `SYNC_MODE=freerun`, `VIEWER=gl` |
 | `shell` | 컨테이너 안 bash (up -d 후 exec) | — |
 | `example <name>` | `python -m newton.examples <name> ...` | viewer 는 인자로 지정 |
 | `jupyter` | JupyterLab @ host:8888 | `JUPYTER_TOKEN=newton`, `/workspace/workspace/notebooks/` |
@@ -22,7 +22,7 @@
 ```bash
 ROBOT=franka ./scripts/host/run.sh sim                            # pack 만 변경
 SYNC_MODE=sync ./scripts/host/run.sh sim                          # sync mode 변경
-VIEWER=gl ./scripts/host/run.sh sim                               # 네이티브 X11 창 (우클릭 드래그로 link 에 force 인가 가능)
+VIEWER=rerun ./scripts/host/run.sh sim                            # 웹 UI (X11 불필요) → http://localhost:9090
 ROBOT=kuka_iiwa_14 SYNC_MODE=sync VIEWER=none \
     ./scripts/host/run.sh sim                                     # 전부 조합
 ```
