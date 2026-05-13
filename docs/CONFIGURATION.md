@@ -1,12 +1,56 @@
 # Configuration Reference
 
-env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 · viewer 모드를 한 곳에. 새 pack 추가 절차는 [ROBOTS.md](ROBOTS.md), 일상 워크플로우는 [USAGE.md](USAGE.md).
+`config/config.yaml` (세션 설정) · 환경 변수 · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 · viewer 모드를 한 곳에. 새 pack 추가 절차는 [ROBOTS.md](ROBOTS.md), 일상 워크플로우는 [USAGE.md](USAGE.md).
 
 ---
 
-## Environment Variables
+## Session config (`config/config.yaml`)
 
-우선순위: `run.sh` 명령줄 export > `.env` > compose.yml 기본값 > 애플리케이션 fallback.
+시뮬레이터의 런타임/뷰어 세팅은 [`config/config.yaml`](../config/config.yaml) 에 모여 있습니다. 컨테이너에는 `/workspace/config/config.yaml` 로 read-only 마운트됩니다 (`docker/compose.yml` 참조).
+
+### 우선순위 (높음 → 낮음)
+
+1. **CLI flag** — `python -m newton_bridge --viewer rerun --sync` 식. 가장 강함
+2. **환경 변수** — `VIEWER=rerun SYNC_MODE=sync ./scripts/host/run.sh` 식. 한방 임시 override
+3. **`config/config.yaml`** — 영속 기본값. 검사 후 커밋 가능
+4. **코드 기본값** — [`src/newton_bridge/config.py`](../src/newton_bridge/config.py) 의 `_DEFAULTS`
+
+각 키마다 동일한 체인이 적용됩니다. CLI 가 unset 이면 env, env 가 unset 이면 yaml, yaml 에도 없으면 코드 기본값으로 떨어집니다. **빈 문자열 env (`VIEWER=`) 는 unset 으로 취급** — `docker compose` 가 unset 호스트 변수를 `VAR=""` 로 forward 해도 yaml 값을 덮지 않습니다.
+
+### 스키마
+
+전체 키는 [`config/config.yaml`](../config/config.yaml) 의 주석을 참고하세요. 요약:
+
+| 섹션 | 키 | 기본 | 허용값 / 비고 |
+|---|---|---|---|
+| `sim` | `sync_mode` | `freerun` | `freerun` \| `sync`. CLI `--sync` / `--freerun` |
+| `sim` | `freerun_rate` | `realtime` | `realtime` \| `max`. CLI `--freerun-rate` |
+| `sim` | `status_log_hz` | `0.0` | 0 = 비활성. CLI `--status-log-hz` |
+| `sim` | `viewer_hz` | `60` | viewer thread wall-clock FPS, 0 = throttle 없음 |
+| `sim` | `sync_timeout_ms` | `100` | sync 모드: cmd 가 이 시간 안 오면 state 재퍼블리시 |
+| `logging` | `level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. CLI `--log-level` |
+| `viewer` | `mode` | `gl` | `gl` \| `rerun` \| `usd` \| `file` \| `null` \| `none`. CLI `--viewer` |
+| `viewer` | `width` / `height` | `1280` / `720` | GL window 크기. CLI `--viewer-width/height` |
+| `viewer` | `output_dir` | `/workspace/workspace/runs` | USD/file 녹화 부모 디렉토리 |
+| `viewer` | `ready_timeout_s` | `60.0` | viewer thread `wait_ready` budget — cold-boot raycast compile ~11s 고려 |
+| `viewer.gl` | `vsync` | `false` | true 로 켜면 tearing 방지하되 throughput 감소 |
+| `viewer.rerun` | `app_id` | `newton_bridge` | Rerun app id |
+| `viewer.rerun` | `web_port` / `grpc_port` | `9090` / `9876` | host:9090 웹 UI, gRPC 9876 (Connection URL) |
+| `viewer.rerun` | `record_to_rrd` | `null` | 경로 지정 시 웹 동시에 `.rrd` 녹화 |
+| `viewer.usd` | `fps` / `up_axis` / `output_path` | `60` / `Z` / `null` | USD 녹화. `output_path: null` 이면 타임스탬프 자동 |
+| `viewer.file` | `output_path` | `null` | `.nvpr` 녹화 경로. `null` 이면 타임스탬프 자동 |
+
+`publish_tf` 는 **로봇 고유 정책** 이라 `config.yaml` 이 아니라 pack 의 `robot.yaml` (`ros.publish_tf`) 에 둡니다. 자체 우선순위 체인은 [§/tf 설정](#tf-설정) 참조.
+
+---
+
+## Environment Variables (override 용)
+
+위 표의 `sim` / `logging` / `viewer` 항목은 모두 env 로 한방 override 가능합니다. 영속 변경이 필요하면 `config/config.yaml` 을 직접 편집하세요.
+
+ROS/DDS infra (`ROBOT_PACK`, `ROS_DOMAIN_ID`, `RMW_IMPLEMENTATION`, FastDDS 토글) 는 **env-only** 입니다 — 컨테이너 plumbing 이지 시뮬레이터 세팅이 아니라 yaml 로 옮기지 않았습니다.
+
+우선순위: CLI > env > `config/config.yaml` > 코드 기본값.
 
 ### 로봇 pack
 
@@ -18,10 +62,7 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 
 ### Sync + pacing
 
-| 변수 | 기본 | 허용값 | 설명 |
-|---|---|---|---|
-| `SYNC_MODE` | `freerun` | `freerun` \| `sync` | sim step trigger 방식. `sync` 는 `/joint_command` 수신마다 1 step. legacy `handshake` 는 deprecation 경고 후 `sync` 로 treat |
-| `FREERUN_RATE` | `realtime` | `realtime` \| `max` | freerun 전용. `max` 는 wall-clock sleep 제거 |
+`SYNC_MODE` / `FREERUN_RATE` 는 `config/config.yaml` 의 `sim.sync_mode` / `sim.freerun_rate` override. 자세한 의미는 [§Session config](#session-config-configconfigyaml) 와 [§Sync mode 요약](#sync-mode-요약).
 
 ### DDS / ROS 2
 
@@ -36,29 +77,15 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 
 ### Viewer
 
-| 변수 | 기본 | 허용값 | 설명 |
-|---|---|---|---|
-| `VIEWER` | `gl` | `gl` \| `rerun` \| `usd` \| `file` \| `null` \| `none` | [§Viewer](#viewer-모드) 참조 |
-| `VIEWER_WIDTH` | `1280` | int | `gl` 창 너비 |
-| `VIEWER_HEIGHT` | `720` | int | `gl` 창 높이 |
-| `VIEWER_FPS` | `60` | int | `usd` 녹화 frame rate |
-| `VIEWER_UP_AXIS` | `Z` | `X` \| `Y` \| `Z` | `usd` 녹화 up axis |
-| `VIEWER_OUTPUT_PATH` | `workspace/runs/sim_<ts>.<ext>` | path | `usd` / `file` 녹화 경로 오버라이드 |
-| `VIEWER_OUTPUT_DIR` | `/workspace/workspace/runs` | dir | 타임스탬프 파일의 부모 디렉토리 |
-| `RERUN_APP_ID` | `newton_bridge` | str | Rerun app id |
-| `RERUN_WEB_PORT` | `9090` | int | Rerun 웹 뷰어 포트 (호스트 `:9090`) |
-| `RERUN_GRPC_PORT` | `9876` | int | Rerun gRPC 포트 |
-| `RERUN_RECORD_TO` | (unset) | path | `.rrd` 녹화 경로. 설정 시 웹 뷰어와 동시 녹화 |
-| `ENABLE_VIEWER` | (deprecated) | — | 설정되면 에러. `VIEWER` 로 대체 |
+뷰어 관련 모든 키는 `config/config.yaml` 의 `viewer:` 섹션에 있습니다. env 는 동일 이름으로 override:
+
+`VIEWER` → `viewer.mode`, `VIEWER_WIDTH/HEIGHT` → `viewer.width/height`, `VIEWER_FPS` → `viewer.usd.fps`, `VIEWER_UP_AXIS` → `viewer.usd.up_axis`, `VIEWER_OUTPUT_PATH` → `viewer.usd.output_path` 와 `viewer.file.output_path`, `VIEWER_OUTPUT_DIR` → `viewer.output_dir`, `RERUN_APP_ID/WEB_PORT/GRPC_PORT/RECORD_TO` → `viewer.rerun.*`. 자세한 모드별 사용법은 [§Viewer 모드](#viewer-모드).
+
+`ENABLE_VIEWER` 는 deprecated — 설정되면 에러로 거절됩니다.
 
 ### Telemetry / 진단
 
-| 변수 | 기본 | 허용값 | 설명 |
-|---|---|---|---|
-| `STATUS_LOG_HZ` | `0` | float | 상태 라인 cadence (Hz, ROS 로거로 emit). 기본 `0` = 비활성. 켜려면 `1.0` 같은 양수 값. 활성 시 STALL 상태에서 자동으로 WARN 레벨로 승격됩니다. |
-| `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` | stdlib `logging` root 레벨. `DEBUG` 로 내리면 viewer thread 의 진단 메시지까지 보입니다. |
-
-`/sim/diagnostics` (`diagnostic_msgs/DiagnosticArray`) 는 항상 1Hz 로 게시되며, 비활성화 환경 변수는 없습니다. 자세한 토픽 내용은 [§Telemetry & 진단](#telemetry--진단) 참조.
+`STATUS_LOG_HZ` → `sim.status_log_hz`, `LOG_LEVEL` → `logging.level`. 의미는 [§Telemetry & 진단](#telemetry--진단). `/sim/diagnostics` 는 항상 1Hz publish, 비활성 토글 없음.
 
 ### GPU / X11
 
@@ -82,7 +109,8 @@ env var · `robot.yaml` / `scene.yaml` 스키마 · ROS 토픽/서비스 계약 
 |---|---|---|
 | `JUPYTER_TOKEN` | `newton` | `run.sh jupyter` 의 `--ServerApp.token` |
 
-전체 기본값 스냅샷: [`.env.example`](../.env.example). 복사해서 `.env` 로 저장하면 `docker compose` 가 자동 로드.
+- 시뮬레이터 세팅 영속 기본값: [`config/config.yaml`](../config/config.yaml)
+- env 스니펫 (한방 override 예시): [`.env.example`](../.env.example) → 복사해서 `.env` 로 저장하면 `docker compose` 자동 로드
 
 ---
 
