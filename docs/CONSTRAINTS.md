@@ -10,8 +10,43 @@ Mimic (URDF) · equality (MJCF connect / weld / joint) — 그리퍼·평행핸�
 | xpbd | ❌ silent ignore | ❌ silent ignore | 단일 floating body / 강체 체인 (passive joint 없음) |
 | featherstone | ❌ silent ignore | ❌ silent ignore | articulation 강체 (passive joint 없음) |
 | semi_implicit / style3d / vbd | ❌ | ❌ | n/a (passive 미지원) |
+| **kamino** (BETA 1) | ❌ hard reject | ❌ hard reject | 폐사슬·다중바디 (단, equality/mimic 없는 모델만) |
 
-`solver: mujoco` 가 아닌데 모델에 mimic/equality 가 있으면 `newton_bridge.world` 가 startup 시 WARNING 로그를 찍습니다. 무시하면 passive joint 가 _말 없이_ 안 동작합니다.
+`solver: mujoco` 가 아닌데 모델에 mimic/equality 가 있으면 `newton_bridge.world` 가 startup 시 WARNING 로그를 찍습니다. 무시하면 passive joint 가 _말 없이_ 안 동작합니다. Kamino 는 다르게 동작합니다 — equality/mimic 이 있는 모델을 받으면 즉시 `ValueError` 로 거절하니 startup 에서 명확히 멈춥니다.
+
+## Newton 1.2.0 변경 사항 (참고)
+
+`newton-bridge` 는 Newton 1.2.0 기준으로 동작합니다. 1.1.0 대비 우리 코드에 영향이 있었던 변경:
+
+- **`SensorContact`** 는 `model.contacts()` 호출 _전에_ 생성돼야 `force` 필드가 contacts 버퍼에 할당됨. `NewtonWorld.__init__` 가 이 순서를 보장하므로 caller 는 신경 쓸 필요 없음 — `world.sensors` 로 접근.
+- **`SolverVBD`** 디폴트: `rigid_contact_hard=True` (이전 `False`), AVBD 파라미터 5종 변경. 우리 hybrid step 테스트 (franka softbody) 는 새 디폴트로 회귀 없이 통과. 1.1.0 거동이 필요하면 `sim.soft_solver_params.rigid_contact_hard: false` 명시.
+- **`SolverKamino`** 등장 (BETA 1). `sim.solver: kamino` 로 opt-in. equality/mimic 모델은 거절.
+
+## SolverKamino (BETA 1, Newton 1.2.0) 사용 가이드
+
+Kamino 는 Disney Research / NVIDIA / Google DeepMind 가 공동 개발 중인 Proximal-ADMM 솔버. **공식 README 가 "현재 사용자는 의존하지 말 것"이라 명시**하고 BETA 2 는 2026 여름 예정입니다. `newton-bridge` 는 그래서 디폴트가 아닌 opt-in 으로 노출합니다.
+
+```yaml
+# robot.yaml
+sim:
+  solver: kamino
+  solver_params:
+    use_collision_detector: false   # default: newton.CollisionPipeline 사용
+    # ... 나머지는 newton.solvers.SolverKamino.Config 필드 그대로
+```
+
+**현재 검증된 조합** (`scripts/container/verify.sh` 12 단계):
+
+| Pack | Source | Kamino | 비고 |
+|---|---|---|---|
+| `kuka_iiwa_14` | MJCF (no equality) | ✅ | OK |
+| pendulum (직접 builder) | — | ✅ | OK |
+| `franka` | MJCF (gripper equality) | ❌ | `ValueError: equality constraints (found 1)` |
+| `ur5e` | xacro → URDF | 미테스트 | — |
+
+**제약**:
+- `softbodies:` 블록 + `solver: kamino` 조합은 startup 에서 거절 (Newton 1.2.0 에서 Kamino + VBD co-simulation 미문서화).
+- equality/mimic 이 있는 모든 모델은 거절. 그리퍼·평행 메커니즘은 `solver: mujoco` 로.
 
 ## 규칙 #1 — passive joint 는 drive 를 0 으로
 

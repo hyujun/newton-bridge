@@ -259,10 +259,11 @@ ros:
 
 **`.npz` 스키마:** `vertices` (N×3 float32), `tet_indices` (T×4 int32) **만** 필요. 모든 attach/material/contact 정보는 `softbodies:` 블록에 둡니다.
 
-**제약 (Newton 1.1.0):**
+**제약 (Newton 1.2.0):**
 - `contact.{ke,kd,mu}` 는 글로벌 — 여러 spec 이 있으면 **마지막 spec 이 winner**.
 - `attach.vertex_indices` 는 명시적으로 나열해야 합니다 (axis/threshold 자동 선택 없음).
 - 파티클이 있는 pack 에서는 `SolverVBD` 가 요구해서 finalize 직전 `builder.color()` 가 자동 호출됩니다.
+- 1.2.0 의 새 `SolverVBD` 디폴트(`rigid_contact_hard=True`, AVBD 파라미터 5종) 가 그대로 적용됩니다. 1.1.0 거동이 필요하면 `sim.soft_solver_params.rigid_contact_hard: false` 등 명시.
 
 ---
 
@@ -270,16 +271,17 @@ ros:
 
 | 소스 | 권장 solver | 이유 |
 |---|---|---|
-| URDF (actuator 없음) | `mujoco` 또는 `xpbd` / `featherstone` | MuJoCo 가 빌더-레벨 gain 을 존중, URDF 에도 잘 맞음 (실측 Newton 1.1.0 에서 URDF + `xpbd` 는 drive 가 joint 에 도달 안 함) |
+| URDF (actuator 없음) | `mujoco` 또는 `xpbd` / `featherstone` | MuJoCo 가 빌더-레벨 gain 을 존중, URDF 에도 잘 맞음 (실측 Newton 1.2.0 에서 URDF + `xpbd` 는 drive 가 joint 에 도달 안 함) |
 | MJCF (with `<actuator>`) | `mujoco` | actuator 블록의 gain 이 solver 로 그대로 전달됨 |
 | MJCF (no `<actuator>`) | `xpbd` / `featherstone` | `drive.stiffness/damping` 이 사용됨 |
+| 폐사슬 / 다중바디 (equality/mimic 없음) | `kamino` (BETA 1, opt-in) | Proximal-ADMM 솔버, 강제 contact + kinematic loop 처리 가능. `docs/CONSTRAINTS.md` 의 Kamino 섹션 참조 |
 
 실제 pack 들:
 - `ur5e` — xacro → URDF + `mujoco`. `$(find ur_description)` 은 apt `ros-jazzy-ur-description` 이 제공
-- `franka` — MJCF + `mujoco` (`panda.xml` 에 actuator 포함)
-- `kuka_iiwa_14` — MJCF + `mujoco`
+- `franka` — MJCF + `mujoco` (`panda.xml` 에 actuator 포함). Kamino 거절 대상 (gripper equality).
+- `kuka_iiwa_14` — MJCF + `mujoco`. Kamino 호환 (equality 없음).
 
-불일치는 `./scripts/host/run.sh verify` 섹션 6 에서 잡힘.
+불일치는 `./scripts/host/run.sh verify` 섹션 6 / 12 에서 잡힘.
 
 ---
 
