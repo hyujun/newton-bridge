@@ -131,9 +131,41 @@ class _FakeWarpArray:
 
 
 class FakePicking:
-    def __init__(self, body_idx: int = -1, active: bool = False) -> None:
+    def __init__(
+        self,
+        body_idx: int = -1,
+        active: bool = False,
+        pick_max_acceleration: float = 5.0,
+        effective_mass: float = 1.0,
+        picked_point: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        picked_local: tuple[float, float, float] | None = None,
+        target: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        stiffness: float = 50.0,
+    ) -> None:
         self.pick_body = _FakeWarpArray(np.array([body_idx], dtype=np.int64))
         self._active = active
+        # Match Newton's PickingState numpy dtype access pattern (record fields).
+        ps = np.zeros(
+            1,
+            dtype=[
+                ("picked_point_local", np.float32, 3),
+                ("picked_point_world", np.float32, 3),
+                ("picking_target_world", np.float32, 3),
+                ("pick_stiffness", np.float32),
+                ("pick_damping", np.float32),
+                ("pick_max_acceleration", np.float32),
+            ],
+        )
+        ps[0]["picked_point_local"] = picked_local if picked_local is not None else picked_point
+        ps[0]["picked_point_world"] = picked_point
+        ps[0]["picking_target_world"] = target
+        ps[0]["pick_stiffness"] = stiffness
+        ps[0]["pick_damping"] = 5.0
+        ps[0]["pick_max_acceleration"] = pick_max_acceleration
+        self.pick_state = _FakeWarpArray(ps)
+        self._pick_effective_mass = _FakeWarpArray(
+            np.array([effective_mass], dtype=np.float32)
+        )
 
     def is_picking(self) -> bool:
         return self._active
@@ -154,6 +186,8 @@ class FakeModel:
         shape_type: np.ndarray,
         shape_scale: np.ndarray,
         shape_transform: np.ndarray,
+        body_mass: np.ndarray | None = None,
+        body_com: np.ndarray | None = None,
     ) -> None:
         self.body_count = body_count
         self.body_label = body_label
@@ -163,22 +197,40 @@ class FakeModel:
         self.shape_scale = _FakeWarpArray(shape_scale)
         self.shape_transform = _FakeWarpArray(shape_transform)
         self.shape_source = [None] * len(shape_type)
+        self.body_mass = _FakeWarpArray(
+            body_mass if body_mass is not None else np.ones(body_count, dtype=np.float32)
+        )
+        self.body_com = _FakeWarpArray(
+            body_com if body_com is not None else np.zeros((body_count, 3), dtype=np.float32)
+        )
+
+
+class FakeRenderer:
+    def __init__(self) -> None:
+        self.arrow_scale = 1.0
 
 
 class FakeViewer:
-    def __init__(self, model: FakeModel) -> None:
+    def __init__(self, model: FakeModel, with_arrows: bool = False) -> None:
         self.model = model
         self.device = "cpu"
         self.picking = FakePicking()
         self.picking_enabled = True
         self.log_lines_calls: list[tuple[str, Any, Any, Any, bool]] = []
+        self.log_arrows_calls: list[tuple[str, Any, Any, Any, bool]] = []
         self.ui_callbacks: list[tuple[Any, str]] = []
+        self.renderer = FakeRenderer() if with_arrows else None
+        if with_arrows:
+            self.log_arrows = self._log_arrows
 
     def register_ui_callback(self, cb, position="side") -> None:
         self.ui_callbacks.append((cb, position))
 
     def log_lines(self, name: str, starts, ends, colors, hidden: bool = False) -> None:
         self.log_lines_calls.append((name, starts, ends, colors, hidden))
+
+    def _log_arrows(self, name: str, starts, ends, colors, hidden: bool = False) -> None:
+        self.log_arrows_calls.append((name, starts, ends, colors, hidden))
 
 
 def _make_one_box_model() -> FakeModel:
@@ -229,14 +281,23 @@ def test_overlay_no_pick_draws_nothing_and_hud_says_none():
 def test_overlay_active_pick_draws_box_wireframe_and_force():
     model = _make_one_box_model()
     viewer = FakeViewer(model)
-    viewer.picking = FakePicking(body_idx=0, active=True)
+    # Drive the spring with: picked_local = (0, 0.1, 0), target = (0.01, 0.1, 0).
+    # mass=1, stiffness=50 → F = (10+1)*50*(0.01,0,0) = (5.5, 0, 0), |F|=5.5.
+    # lever (pick_world - COM) = (0, 0.1, 0) → torque = lever × F = (0, 0, -0.55).
+    viewer.picking = FakePicking(
+        body_idx=0,
+        active=True,
+        picked_local=(0.0, 0.1, 0.0),
+        picked_point=(0.0, 0.1, 0.0),
+        target=(0.01, 0.1, 0.0),
+        stiffness=50.0,
+    )
     overlay = PickingOverlay(viewer)
     overlay.register_hud()
 
     # body at origin, identity orientation
     body_q = np.array([[0, 0, 0, 0, 0, 0, 1]], dtype=np.float32)
-    body_f = np.array([[3.0, 4.0, 0.0, 0.0, 0.0, 5.0]], dtype=np.float32)  # |F|=5, |t|=5
-    state = FakeState(body_q=body_q, body_f=body_f)
+    state = FakeState(body_q=body_q, body_f=np.zeros((1, 6), dtype=np.float32))
 
     overlay.update(state)
 
@@ -248,13 +309,13 @@ def test_overlay_active_pick_draws_box_wireframe_and_force():
     s_np = starts.numpy()
     assert s_np.shape == (12, 3)
 
-    # HUD reflects link name and force/torque magnitudes.
+    # HUD reflects link name and spring force/torque magnitudes.
     imgui = _FakeImgui()
     overlay._draw_hud(imgui)
     joined = "\n".join(imgui.lines)
     assert "link0" in joined
-    assert "5.00 N" in joined
-    assert "5.000 Nm" in joined
+    assert "5.50 N" in joined
+    assert "0.550 Nm" in joined
 
 
 def test_overlay_handles_multiple_shapes_per_body():
@@ -309,3 +370,132 @@ def test_overlay_clears_when_pick_released():
     viewer.picking = FakePicking(body_idx=-1, active=False)
     overlay.update(state)
     assert viewer.log_lines_calls[-1] == ("picking_overlay/wireframe", None, None, None, False)
+
+
+# ---------- force arrow + thickness modulation ---------------------------
+
+
+def test_force_arrow_drawn_with_endpoints_and_color_when_active():
+    model = _make_one_box_model()
+    viewer = FakeViewer(model, with_arrows=True)
+    # Large Δ → spring force saturates F_max → ratio=1.0 → red color.
+    viewer.picking = FakePicking(
+        body_idx=0,
+        active=True,
+        pick_max_acceleration=5.0,
+        effective_mass=1.0,
+        picked_point=(0.1, 0.2, 0.3),
+        picked_local=(0.1, 0.2, 0.3),
+        target=(0.5, 0.2, 0.3),
+        stiffness=50.0,
+    )
+    overlay = PickingOverlay(viewer)
+
+    state = FakeState(
+        body_q=np.array([[0, 0, 0, 0, 0, 0, 1]], dtype=np.float32),
+        body_f=np.zeros((1, 6), dtype=np.float32),
+    )
+    overlay.update(state)
+
+    assert viewer.log_arrows_calls, "force arrow should be drawn"
+    name, starts, ends, color, hidden = viewer.log_arrows_calls[-1]
+    assert name == "picking_overlay/force_arrow"
+    assert hidden is False
+    np.testing.assert_allclose(starts.numpy().reshape(3), [0.1, 0.2, 0.3], atol=1e-5)
+    np.testing.assert_allclose(ends.numpy().reshape(3), [0.5, 0.2, 0.3], atol=1e-5)
+    # ratio=1.0 (saturated) → red (1,0,0)
+    assert color == (1.0, 0.0, 0.0)
+
+
+def test_arrow_thickness_modulated_and_restored():
+    model = _make_one_box_model()
+    viewer = FakeViewer(model, with_arrows=True)
+    base = viewer.renderer.arrow_scale
+    # Large Δ saturates F_max → ratio=1.0 → arrow_scale = base * (1 + gain) = base * 4.
+    viewer.picking = FakePicking(
+        body_idx=0,
+        active=True,
+        pick_max_acceleration=5.0,
+        effective_mass=1.0,
+        picked_point=(0.0, 0.0, 0.0),
+        picked_local=(0.0, 0.0, 0.0),
+        target=(0.1, 0.0, 0.0),
+        stiffness=50.0,
+    )
+    overlay = PickingOverlay(viewer)
+
+    state_full = FakeState(
+        body_q=np.array([[0, 0, 0, 0, 0, 0, 1]], dtype=np.float32),
+        body_f=np.zeros((1, 6), dtype=np.float32),
+    )
+    overlay.update(state_full)
+    assert viewer.renderer.arrow_scale == pytest.approx(base * 4.0)
+
+    # Release: arrow_scale restored, force_arrow cleared.
+    viewer.picking = FakePicking(body_idx=-1, active=False)
+    overlay.update(state_full)
+    assert viewer.renderer.arrow_scale == pytest.approx(base)
+    assert viewer.log_arrows_calls[-1] == (
+        "picking_overlay/force_arrow",
+        None,
+        None,
+        None,
+        False,
+    )
+
+
+def test_force_arrow_skipped_for_degenerate_segment():
+    model = _make_one_box_model()
+    viewer = FakeViewer(model, with_arrows=True)
+    viewer.picking = FakePicking(
+        body_idx=0,
+        active=True,
+        picked_point=(0.5, 0.5, 0.5),
+        target=(0.5, 0.5, 0.5),  # zero-length
+    )
+    overlay = PickingOverlay(viewer)
+
+    state = FakeState(
+        body_q=np.array([[0, 0, 0, 0, 0, 0, 1]], dtype=np.float32),
+        body_f=np.zeros((1, 6), dtype=np.float32),
+    )
+    overlay.update(state)
+
+    # log_arrows called, but with None (degenerate clear) — last entry is the clear.
+    assert viewer.log_arrows_calls[-1][1] is None
+
+
+def test_hud_includes_force_torque_components():
+    model = _make_one_box_model()
+    viewer = FakeViewer(model, with_arrows=True)
+    # Large Δ saturates the clamp: F = (F_max, 0, 0) = (49.05, 0, 0).
+    # picked_local=(0,0.1,0) → lever × F = (0, 0, -0.1 * 49.05) ≈ -4.905.
+    viewer.picking = FakePicking(
+        body_idx=0,
+        active=True,
+        pick_max_acceleration=5.0,
+        effective_mass=1.0,
+        picked_point=(0.0, 0.1, 0.0),
+        picked_local=(0.0, 0.1, 0.0),
+        target=(0.3, 0.1, 0.0),
+        stiffness=50.0,
+    )
+    overlay = PickingOverlay(viewer)
+
+    state = FakeState(
+        body_q=np.array([[0, 0, 0, 0, 0, 0, 1]], dtype=np.float32),
+        body_f=np.zeros((1, 6), dtype=np.float32),
+    )
+    overlay.update(state)
+
+    imgui = _FakeImgui()
+    overlay._draw_hud(imgui)
+    joined = "\n".join(imgui.lines)
+    # Force magnitude (clamped to F_max = 49.05)
+    assert "49.05 N" in joined
+    # Per-axis force components: F = (+49.05, 0, 0)
+    assert "+49.05" in joined
+    # Per-axis torque components: τ ≈ (0, 0, -4.905) — rounded to 3 decimals
+    assert "-4.905" in joined
+    # F_max % indicator: ratio=1.0 → 100%
+    assert "100% F_max" in joined

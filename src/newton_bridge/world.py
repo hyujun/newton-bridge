@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import warp as wp
@@ -110,6 +110,20 @@ class NewtonWorld:
         self._control_effort_host = np.zeros(self.total_dof, dtype=np.float32)
         self.sim_time: float = 0.0
 
+        # Viewer reference for right-drag picking: when set via set_viewer(),
+        # _step_kernels invokes viewer.apply_forces(state_0) each substep so
+        # mouse-driven wrenches actually land in state.body_f before solver.step.
+        # Newton's apply_picking_force_kernel is a no-op when no body is picked,
+        # so it is safe to include in the captured CUDA graph regardless.
+        self._viewer: Any = None
+
+        # Optional ViewerThread reference: when wait_ready() times out on a
+        # cold first launch (raycast kernel compile spike), get_viewer() can
+        # legitimately return None even after set_viewer is called. step()
+        # then polls thread.get_viewer() once per call until a real instance
+        # is attached. None for tests / headless paths that don't use a thread.
+        self._viewer_thread: Any = None
+
         # builder.joint_q / joint_target_pos already put us at home, but
         # mirror into _control_target_pos_host + re-assert for reset() parity.
         self._apply_home_pose()
@@ -118,6 +132,27 @@ class NewtonWorld:
         # the first cuda step(); set back to None whenever the model changes
         # (reset / set_gravity / etc.) to force a recapture.
         self._step_graph: wp.Graph | None = None
+        self._capture_step_graph()
+
+    def set_viewer_thread(self, thread: Any) -> None:
+        """Stash a ViewerThread reference so step() can lazy-retry attach.
+
+        Required only when the viewer is built on a worker thread and may
+        miss the wait_ready() budget — see step() docstring. Safe to call
+        with None to clear.
+        """
+        self._viewer_thread = thread
+
+    def set_viewer(self, viewer: Any) -> None:
+        """Attach a Newton viewer so its per-frame forces (right-drag picking,
+        wind, ...) reach the physics state.
+
+        Recaptures the CUDA step graph so `viewer.apply_forces(state_0)` is
+        included in subsequent step()s. Pass None to detach.
+        """
+        if self._viewer is viewer:
+            return
+        self._viewer = viewer
         self._capture_step_graph()
 
     # -- NEWTON API SURFACE -------------------------------------------------
@@ -909,9 +944,12 @@ class NewtonWorld:
         n = self.substeps
         odd = n % 2 == 1
         is_kamino = self._solver_name == "kamino"
+        viewer = self._viewer
         for i in range(n):
             self.model.collide(self.state_0, self.contacts)
             self.state_0.clear_forces()
+            if viewer is not None:
+                viewer.apply_forces(self.state_0)
             self.solver.step(
                 self.state_0, self.state_1, self.control, self.contacts, dt
             )
@@ -950,6 +988,7 @@ class NewtonWorld:
 
         n = self.substeps
         odd = n % 2 == 1
+        viewer = self._viewer
         for i in range(n):
             self.state_0.clear_forces()
             self.state_1.clear_forces()
@@ -962,6 +1001,9 @@ class NewtonWorld:
             self.model.particle_count = 0
             self.model.gravity.assign(self._gravity_zero_buf)
             self.model.shape_contact_pair_count = 0
+
+            if viewer is not None:
+                viewer.apply_forces(self.state_0)
 
             self.solver.step(
                 self.state_0, self.state_1, self.control, self.contacts, dt
@@ -1028,6 +1070,14 @@ class NewtonWorld:
         self._step_graph = capture.graph
 
     def step(self) -> None:
+        # Lazy viewer attach: cold-launch viewer build can exceed wait_ready
+        # budget (raycast kernel compile is ~11s), so __main__ may have called
+        # set_viewer(None). Once the thread finishes, the next step() picks it
+        # up. Polled at step rate; cheap once attached (early return on `is`).
+        if self._viewer is None and self._viewer_thread is not None:
+            v = self._viewer_thread.get_viewer()
+            if v is not None:
+                self.set_viewer(v)
         if self._step_graph is not None:
             wp.capture_launch(self._step_graph)
         else:

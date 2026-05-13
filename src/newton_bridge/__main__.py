@@ -208,10 +208,22 @@ def main(argv: list[str] | None = None) -> int:
         snapshot, viewer_factory, viewer_hz=viewer_hz, telemetry=telemetry
     )
     viewer_thread.start()
-    viewer_thread.wait_ready(timeout=10.0)
+    # 60s: cold runs compile newton._src.geometry.raycast (~11s on a 3070 Ti)
+    # inside the viewer factory before ready_event fires. A 10s budget timed
+    # out on first launch, leaving get_viewer()==None and right-drag picking
+    # silently disabled. Warm runs return in <1s.
+    viewer_thread.wait_ready(timeout=60.0)
     if viewer_thread.build_error is not None:
         # build_error already printed by the factory; thread will idle.
         pass
+
+    # Wire the viewer into the physics step so right-drag picking actually
+    # pushes a wrench into state.body_f. set_viewer() also recaptures the
+    # CUDA graph to include viewer.apply_forces. The viewer_thread reference
+    # itself is also passed in so world.step() can lazy-retry the attach if
+    # wait_ready timed out (cold first-launch with extra-slow kernel compile).
+    world.set_viewer_thread(viewer_thread)
+    world.set_viewer(viewer_thread.get_viewer())
 
     if viewer_mode == "none":
         # No viewer at all → stop the thread; nothing for it to do.

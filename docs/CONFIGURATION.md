@@ -528,11 +528,12 @@ prereq: 호스트 X 서버 (Wayland 도 XWayland 로 OK), `DISPLAY` 세팅, nvid
   | `Esc` / 창 닫기 | sim 종료 |
   | UI Reset 버튼 | `/sim/reset` 서비스 호출과 동일한 경로 (queue 로 신호 → main 이 reset 수행). viewer 가 직접 `world.reset()` 을 부르지 않음 |
   | WASD / 마우스 | 카메라 이동 / 회전 (Newton ViewerGL 내부 처리) |
-  | 우클릭 + 드래그 | link 에 spring-damper external force 인가 (picking). 선택된 link 는 **마젠타 wireframe** 으로 강조, stats 패널에 `pick: <link>` / `\|F\|` / `\|t\|` 표시 |
+  | 우클릭 + 드래그 | link 에 spring-damper external force 인가 (picking). 선택된 link 는 **마젠타 wireframe** + **drag 화살표** 로 강조, stats 패널에 `pick: <link>` / `\|F\|` / Fx/Fy/Fz / `\|t\|` / tx/ty/tz 표시 |
 
 - **Picking GUI (right-drag)** — Newton 내장 spring-damper 가 잡은 body 의 `state.body_f` 에 wrench 를 누적. `newton_bridge.picking_overlay.PickingOverlay` 가 매 frame
   - 선택된 body 에 속한 모든 shape (box/sphere/capsule/cylinder/ellipsoid/mesh) 의 wireframe 을 RGB `(1,0,1)` 마젠타로 overlay
-  - stats 패널에 link 이름과 `\|F\|` (N), `\|t\|` (Nm) 표시
+  - 잡은 점에서 drag 타깃까지 **force 화살표** — 색은 `|F|/F_max` 비율에 따라 cyan → yellow → red, 굵기는 같은 비율로 변조 (놓으면 원래 크기로 복원)
+  - stats 패널: link 이름, `|F|` (N) + `%F_max`, 컴포넌트 `F = [Fx, Fy, Fz]`, `|t|` (Nm), 컴포넌트 `t = [tx, ty, tz]`. F_max = `pick_max_acceleration · g · effective_mass[body]` (Newton picking kernel 의 클램프 한계와 동일)
   - 비 GL 뷰어 (Rerun/USD/File/Null) 에서는 picking 인터페이스 자체가 없어서 silently no-op. 진짜 wrench 인가가 필요하면 `VIEWER=gl` 필수 (기본값).
 - 실패 모드: X socket 접근 불가 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참조.
 

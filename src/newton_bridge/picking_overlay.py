@@ -1,13 +1,16 @@
-"""GUI overlay for ViewerGL picking: HUD + magenta wireframe.
+"""GUI overlay for ViewerGL picking: HUD + magenta wireframe + force arrow.
 
 When a user right-clicks a body in the GL viewer, Newton's built-in picking
 machinery (`viewer.picking`) applies a spring-damper force to that body. This
-module adds two visual cues so the interaction is legible:
+module adds three visual cues so the interaction is legible:
 
-1. **HUD text** in the GL stats panel: picked link name and |F|, |tau|
-   computed from the wrench Newton wrote into `state.body_f[pick_body]`.
+1. **HUD text** in the GL stats panel: picked link name, |F|, |tau|, plus
+   per-axis force/torque components — read from `state.body_f[pick_body]`.
 2. **Magenta wireframe overlay** drawn on top of every shape attached to the
-   picked body, rendered via the viewer's existing `log_lines` segment API.
+   picked body, via the viewer's existing `log_lines` API.
+3. **Force arrow** from the picked geometry point to the drag target, colored
+   by |F|/F_max (cyan → yellow → red) and with arrow thickness modulated by
+   the same ratio via the viewer's global `arrow_scale` (restored on release).
 
 Both run inside the viewer thread (no cross-thread state). Wireframe edges
 are precomputed once per shape index and cached; per-frame work is just a
@@ -29,6 +32,12 @@ log = logging.getLogger(__name__)
 
 MAGENTA = (1.0, 0.0, 1.0)
 _OVERLAY_NAME = "picking_overlay/wireframe"
+_FORCE_ARROW_NAME = "picking_overlay/force_arrow"
+
+# Arrow thickness modulation: scale = base * (1 + _ARROW_THICKNESS_GAIN * ratio),
+# where ratio = clamp(|F| / F_max, 0, 1). Keeps idle arrows at their base size
+# while clearly inflating the picking arrow as the user drags further.
+_ARROW_THICKNESS_GAIN = 3.0
 
 # Newton GeoType ints; mirrored locally so this module can be imported in
 # host-side tests without newton installed.
@@ -197,6 +206,9 @@ class PickingOverlay:
         self._latest_link_name: str = ""
         self._latest_force_mag: float = 0.0
         self._latest_torque_mag: float = 0.0
+        self._latest_force_vec: np.ndarray = np.zeros(3, dtype=np.float32)
+        self._latest_torque_vec: np.ndarray = np.zeros(3, dtype=np.float32)
+        self._latest_force_ratio: float = 0.0
 
         # Cached numpy snapshots of model arrays (host-side, immutable per model).
         self._shape_type = model.shape_type.numpy() if model.shape_count > 0 else np.array([], dtype=np.int32)
@@ -206,6 +218,35 @@ class PickingOverlay:
         self._shape_transform = (
             model.shape_transform.numpy() if model.shape_count > 0 else np.zeros((0, 7), dtype=np.float32)
         )
+
+        # Per-body F_max estimate, mirroring picking.py's clamp formula:
+        # F_max = pick_max_acceleration * g * effective_mass[body].
+        picking = getattr(viewer, "picking", None)
+        try:
+            pick_state_np = picking.pick_state.numpy()
+            pick_max_acc = float(pick_state_np[0]["pick_max_acceleration"])
+            effective_mass = picking._pick_effective_mass.numpy()
+            self._force_max_per_body = (pick_max_acc * 9.81 * effective_mass).astype(np.float32)
+        except Exception:  # noqa: BLE001
+            self._force_max_per_body = np.ones(model.body_count, dtype=np.float32)
+
+        # Cache body_mass / body_com for HUD spring-force recomputation.
+        try:
+            self._body_mass = model.body_mass.numpy().astype(np.float32)
+        except Exception:  # noqa: BLE001
+            self._body_mass = np.zeros(model.body_count, dtype=np.float32)
+        try:
+            self._body_com = model.body_com.numpy().astype(np.float32)
+        except Exception:  # noqa: BLE001
+            self._body_com = np.zeros((model.body_count, 3), dtype=np.float32)
+
+        # Capture renderer arrow_scale so we can restore it when picking ends.
+        # `renderer.arrow_scale` is a single uniform shared with all arrows;
+        # we modulate it only while picking is active.
+        renderer = getattr(viewer, "renderer", None)
+        self._renderer = renderer
+        self._base_arrow_scale = float(getattr(renderer, "arrow_scale", 1.0)) if renderer is not None else 1.0
+        self._arrow_scale_modulated = False
 
     # ---- attachment ---------------------------------------------------------
 
@@ -242,24 +283,54 @@ class PickingOverlay:
             self._body_names[pick_body] if 0 <= pick_body < len(self._body_names) else f"body_{pick_body}"
         )
 
-        # Force/torque magnitudes from state.body_f[pick_body]
-        try:
-            body_f = state.body_f.numpy()[pick_body]
-            # spatial_vector layout in Newton is (top=linear, bottom=angular) when
-            # accessed via .numpy() — float[6]. Linear is what apply_picking_force
-            # writes via wp.spatial_top, so [:3] = force, [3:] = torque.
-            f = body_f[:3]
-            t = body_f[3:6]
-            self._latest_force_mag = float(np.linalg.norm(f))
-            self._latest_torque_mag = float(np.linalg.norm(t))
-        except Exception:  # noqa: BLE001
-            self._latest_force_mag = 0.0
-            self._latest_torque_mag = 0.0
-
-        # Magenta wireframe overlay
+        # Force/torque from the picking spring (damping omitted so the HUD shows
+        # the steady-state value the user is dragging toward, independent of
+        # body velocity). Mirrors Newton's apply_picking_force_kernel:
+        #   F = (10 + body_mass) * pick_stiffness * (target - pick_point_world)
+        #   F = clamp(F, pick_max_acceleration * g * effective_mass)
+        #   tau = (pick_point_world - COM_world) x F
+        # state.body_f is not used because clear_forces() zeros it right
+        # before viewer.apply_forces, and the captured snapshot is taken
+        # after solver.step has consumed it.
         try:
             body_q = state.body_q.numpy()[pick_body]
         except Exception:  # noqa: BLE001
+            body_q = None
+
+        if body_q is not None:
+            try:
+                f, t = self._spring_force_torque(picking, body_q, pick_body)
+                self._latest_force_vec = f
+                self._latest_torque_vec = t
+                self._latest_force_mag = float(np.linalg.norm(f))
+                self._latest_torque_mag = float(np.linalg.norm(t))
+            except Exception:  # noqa: BLE001
+                log.exception("picking HUD force calc failed")
+                self._latest_force_vec = np.zeros(3, dtype=np.float32)
+                self._latest_torque_vec = np.zeros(3, dtype=np.float32)
+                self._latest_force_mag = 0.0
+                self._latest_torque_mag = 0.0
+        else:
+            self._latest_force_vec = np.zeros(3, dtype=np.float32)
+            self._latest_torque_vec = np.zeros(3, dtype=np.float32)
+            self._latest_force_mag = 0.0
+            self._latest_torque_mag = 0.0
+
+        # Normalized |F|/F_max ratio drives arrow color + thickness modulation.
+        f_max = (
+            float(self._force_max_per_body[pick_body])
+            if 0 <= pick_body < len(self._force_max_per_body)
+            else 0.0
+        )
+        ratio = self._latest_force_mag / f_max if f_max > 1e-6 else 0.0
+        self._latest_force_ratio = float(max(0.0, min(1.0, ratio)))
+        self._apply_arrow_thickness(self._latest_force_ratio)
+
+        # Force arrow from picked geometry point to drag target.
+        self._draw_force_arrow(picking, self._latest_force_ratio)
+
+        # Magenta wireframe overlay
+        if body_q is None:
             self._draw_lines(None, None)
             return
 
@@ -287,7 +358,12 @@ class PickingOverlay:
         self._latest_link_name = ""
         self._latest_force_mag = 0.0
         self._latest_torque_mag = 0.0
+        self._latest_force_vec = np.zeros(3, dtype=np.float32)
+        self._latest_torque_vec = np.zeros(3, dtype=np.float32)
+        self._latest_force_ratio = 0.0
         self._draw_lines(None, None)
+        self._draw_force_arrow(None, 0.0)
+        self._restore_arrow_thickness()
 
     # ---- wireframe edge cache ----------------------------------------------
 
@@ -364,6 +440,100 @@ class PickingOverlay:
         except Exception:  # noqa: BLE001
             log.exception("picking overlay log_lines failed")
 
+    # ---- spring-force calculation (mirrors apply_picking_force_kernel) -----
+
+    def _spring_force_torque(
+        self, picking: Any, body_q: np.ndarray, pick_body: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Recompute the spring-only picking wrench host-side.
+
+        Damping is omitted so the HUD shows the steady-state value the user is
+        dragging toward (independent of body velocity), but mass-scaling and
+        the F_max clamp are applied to match what the solver actually receives.
+        """
+        ps = picking.pick_state.numpy()[0]
+        target = np.asarray(ps["picking_target_world"], dtype=np.float32)
+        pick_local = np.asarray(ps["picked_point_local"], dtype=np.float32)
+        stiffness = float(ps["pick_stiffness"])
+
+        pick_world = _transform_points(pick_local[None, :], body_q.astype(np.float32))[0]
+
+        mass = float(self._body_mass[pick_body]) if 0 <= pick_body < len(self._body_mass) else 0.0
+        force_multiplier = 10.0 + mass
+        force = force_multiplier * stiffness * (target - pick_world)
+
+        f_max = float(self._force_max_per_body[pick_body]) if 0 <= pick_body < len(self._force_max_per_body) else 0.0
+        if f_max > 0.0:
+            f_mag = float(np.linalg.norm(force))
+            if f_mag > f_max:
+                force = force * (f_max / f_mag)
+
+        com_local = self._body_com[pick_body] if 0 <= pick_body < len(self._body_com) else np.zeros(3, dtype=np.float32)
+        com_world = _transform_points(com_local[None, :].astype(np.float32), body_q.astype(np.float32))[0]
+        torque = np.cross(pick_world - com_world, force)
+        return force.astype(np.float32), torque.astype(np.float32)
+
+    # ---- force arrow + thickness modulation --------------------------------
+
+    @staticmethod
+    def _color_from_ratio(ratio: float) -> tuple[float, float, float]:
+        """cyan (low |F|) → yellow (mid) → red (saturated)."""
+        r = max(0.0, min(1.0, ratio))
+        if r < 0.5:
+            # cyan (0,1,1) → yellow (1,1,0)
+            u = r / 0.5
+            return (u, 1.0, 1.0 - u)
+        # yellow (1,1,0) → red (1,0,0)
+        u = (r - 0.5) / 0.5
+        return (1.0, 1.0 - u, 0.0)
+
+    def _draw_force_arrow(self, picking: Any, ratio: float) -> None:
+        log_arrows = getattr(self.viewer, "log_arrows", None)
+        if not callable(log_arrows):
+            return
+        try:
+            if picking is None:
+                log_arrows(_FORCE_ARROW_NAME, None, None, None)
+                return
+            import warp as wp  # noqa: PLC0415
+
+            pick_state = picking.pick_state.numpy()
+            picked = pick_state[0]["picked_point_world"]
+            target = pick_state[0]["picking_target_world"]
+            start = np.asarray([picked[0], picked[1], picked[2]], dtype=np.float32)
+            end = np.asarray([target[0], target[1], target[2]], dtype=np.float32)
+
+            # Skip degenerate arrows (target == picked).
+            if float(np.linalg.norm(end - start)) < 1e-5:
+                log_arrows(_FORCE_ARROW_NAME, None, None, None)
+                return
+
+            device = getattr(self.viewer, "device", None)
+            starts_wp = wp.array(start.reshape(1, 3), dtype=wp.vec3, device=device)
+            ends_wp = wp.array(end.reshape(1, 3), dtype=wp.vec3, device=device)
+            color = self._color_from_ratio(ratio)
+            log_arrows(_FORCE_ARROW_NAME, starts_wp, ends_wp, color, hidden=False)
+        except Exception:  # noqa: BLE001
+            log.exception("picking overlay force arrow failed")
+
+    def _apply_arrow_thickness(self, ratio: float) -> None:
+        if self._renderer is None:
+            return
+        try:
+            self._renderer.arrow_scale = self._base_arrow_scale * (1.0 + _ARROW_THICKNESS_GAIN * ratio)
+            self._arrow_scale_modulated = True
+        except Exception:  # noqa: BLE001
+            log.exception("arrow_scale modulation failed")
+
+    def _restore_arrow_thickness(self) -> None:
+        if self._renderer is None or not self._arrow_scale_modulated:
+            return
+        try:
+            self._renderer.arrow_scale = self._base_arrow_scale
+        except Exception:  # noqa: BLE001
+            log.exception("arrow_scale restore failed")
+        self._arrow_scale_modulated = False
+
     # ---- HUD ---------------------------------------------------------------
 
     def _draw_hud(self, imgui: Any) -> None:
@@ -372,7 +542,11 @@ class PickingOverlay:
                 imgui.text("pick: none (right-drag a link)")
                 return
             imgui.text(f"pick: {self._latest_link_name}")
-            imgui.text(f" |F| = {self._latest_force_mag:.2f} N")
+            imgui.text(f" |F| = {self._latest_force_mag:.2f} N  ({self._latest_force_ratio * 100.0:.0f}% F_max)")
+            fx, fy, fz = self._latest_force_vec
+            imgui.text(f"  F = [{fx:+.2f}, {fy:+.2f}, {fz:+.2f}] N")
             imgui.text(f" |t| = {self._latest_torque_mag:.3f} Nm")
+            tx, ty, tz = self._latest_torque_vec
+            imgui.text(f"  t = [{tx:+.3f}, {ty:+.3f}, {tz:+.3f}] Nm")
         except Exception:  # noqa: BLE001
             log.exception("picking HUD draw failed")

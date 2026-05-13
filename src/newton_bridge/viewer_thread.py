@@ -126,6 +126,16 @@ class ViewerThread:
         """Block until the viewer has been built (or failed). Returns True if ready."""
         return self.ready_event.wait(timeout=timeout)
 
+    def get_viewer(self) -> Any:
+        """Return the viewer instance (or None). Safe to call from any thread.
+
+        The physics thread needs this reference to call `viewer.apply_forces`
+        each step so right-drag picking actually pushes a wrench into
+        `state.body_f`. The viewer is otherwise owned by this thread.
+        """
+        with self._viewer_lock:
+            return self._viewer
+
     def stop(self, timeout: float | None = 0.5) -> None:
         """Signal the viewer thread to stop and best-effort join.
 
