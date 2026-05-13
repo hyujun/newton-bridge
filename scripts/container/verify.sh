@@ -308,6 +308,37 @@ assert np.allclose(g, [0.0, 0.0, -9.81]), g
 print("ok: solver_params pass-through + gravity mutation")
 PY
 
+banner "12. SolverKamino opt-in (Newton 1.2.0 BETA 1)"
+# Kamino is opt-in via sim.solver=kamino. Two checks:
+#   1. A compatible pack (kuka_iiwa_14 — no equality/mimic) steps cleanly.
+#   2. An incompatible pack (franka — gripper <equality>) is rejected with
+#      a ValueError that suggests the mujoco fallback.
+run "kamino accepts kuka + rejects franka" python3 - <<'PY'
+import warp as wp; wp.init()
+from pathlib import Path
+from newton_bridge.robot_pack import load_pack
+from newton_bridge.world import NewtonWorld
+
+# Compatible case
+pack = load_pack(Path("/workspace/robots/kuka_iiwa_14"))
+pack["sim"]["solver"] = "kamino"
+world = NewtonWorld(pack)
+assert world._solver_name == "kamino"
+for _ in range(10):
+    world.step()
+
+# Incompatible case — must raise ValueError, not crash
+pack_bad = load_pack(Path("/workspace/robots/franka"))
+pack_bad["sim"]["solver"] = "kamino"
+try:
+    NewtonWorld(pack_bad)
+    raise SystemExit("expected ValueError for franka + kamino (equality constraint)")
+except ValueError as e:
+    msg = str(e)
+    assert "SolverKamino" in msg and "mujoco" in msg, msg
+print("ok: kamino runs on kuka, rejects franka with mujoco-fallback hint")
+PY
+
 banner "Summary"
 printf 'passed: %d   failed: %d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"

@@ -126,7 +126,13 @@ class NewtonWorld:
         src_path = str(self.pack["_pack_dir"] / self.pack["robot"]["source_rel"])
         base_pos = self.pack["robot"].get("base_position", [0.0, 0.0, 0.0])
 
+        # Kamino (BETA 1, Newton 1.2.0) needs to register custom attributes on
+        # the builder BEFORE any add_urdf/add_mjcf so its per-joint metadata
+        # gets allocated on imported assets. Skipped for all other solvers.
+        self._solver_name = self.pack["sim"].get("solver", "xpbd").lower()
         builder = newton.ModelBuilder()
+        if self._solver_name == "kamino":
+            newton.solvers.SolverKamino.register_custom_attributes(builder)
         xform = wp.transform(base_pos, wp.quat_identity())
         if src_fmt == "urdf":
             # enable_self_collisions=False: URDF mesh colliders otherwise
@@ -195,7 +201,15 @@ class NewtonWorld:
         if self.softbodies:
             builder.color()
 
-        self.model = builder.finalize(device=self.device)
+        # Kamino's anymal_d example passes skip_validation_joints=True; without
+        # it, finalize trips Newton's articulation validator on Kamino's custom
+        # joint metadata. No-op for other solvers.
+        if self._solver_name == "kamino":
+            self.model = builder.finalize(
+                device=self.device, skip_validation_joints=True
+            )
+        else:
+            self.model = builder.finalize(device=self.device)
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
@@ -506,7 +520,7 @@ class NewtonWorld:
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_solver(self) -> None:
         sim_cfg = self.pack["sim"]
-        solver_name = sim_cfg.get("solver", "xpbd").lower()
+        solver_name = self._solver_name
         kwargs = dict(sim_cfg.get("solver_params", {}) or {})
 
         solver_map = {
@@ -516,6 +530,7 @@ class NewtonWorld:
             "semi_implicit": newton.solvers.SolverSemiImplicit,
             "style3d": newton.solvers.SolverStyle3D,
             "vbd": newton.solvers.SolverVBD,
+            "kamino": newton.solvers.SolverKamino,  # BETA 1 — see docs/CONSTRAINTS.md
         }
         cls = solver_map.get(solver_name)
         if cls is None:
@@ -523,12 +538,24 @@ class NewtonWorld:
                 f"unknown solver: {solver_name!r}. "
                 f"expected one of {sorted(solver_map.keys())}"
             )
-        try:
-            self.solver = cls(self.model, **kwargs)
-        except TypeError as exc:
-            raise ValueError(
-                f"solver {solver_name!r} rejected solver_params={kwargs!r}: {exc}"
-            ) from None
+
+        if solver_name == "kamino":
+            # Kamino + VBD softbody co-simulation is undocumented in Newton 1.2.0;
+            # reject the combination explicitly so the user sees a clear error
+            # instead of a runtime crash deep inside SolverKamino.
+            if self.softbodies:
+                raise ValueError(
+                    "solver='kamino' does not support softbodies (Newton 1.2.0). "
+                    "Either remove the `softbodies:` block or set sim.solver=vbd/mujoco."
+                )
+            self._build_kamino_solver(kwargs)
+        else:
+            try:
+                self.solver = cls(self.model, **kwargs)
+            except TypeError as exc:
+                raise ValueError(
+                    f"solver {solver_name!r} rejected solver_params={kwargs!r}: {exc}"
+                ) from None
 
         # Only SolverMuJoCo honors <mimic> and <equality>. Other solvers
         # silently ignore them, which manifests as passive joints not moving.
@@ -554,6 +581,41 @@ class NewtonWorld:
         else:
             self.soft_solver = None
             self.collision_pipeline = None
+
+    # -- NEWTON API SURFACE -------------------------------------------------
+    def _build_kamino_solver(self, solver_params: dict) -> None:
+        """Kamino (BETA 1, Newton 1.2.0) uses Config-object construction.
+
+        `solver_params` keys are mapped onto SolverKamino.Config attributes
+        (e.g. `use_collision_detector`, `angular_velocity_damping`). Any unknown
+        key raises ValueError so typos surface immediately instead of being
+        silently ignored.
+        """
+        SK = newton.solvers.SolverKamino
+        cfg = SK.Config.from_model(self.model)
+        # Default to Newton's CollisionPipeline (the same code path as other
+        # solvers in this wrapper). Pack can flip this to True to switch over
+        # to Kamino's internal collision detector.
+        cfg.use_collision_detector = False
+
+        for key, value in solver_params.items():
+            if not hasattr(cfg, key):
+                raise ValueError(
+                    f"solver='kamino': unknown Config field {key!r}. "
+                    f"Inspect newton.solvers.SolverKamino.Config for valid fields."
+                )
+            setattr(cfg, key, value)
+
+        try:
+            self.solver = SK(self.model, config=cfg)
+        except ValueError as exc:
+            # SolverKamino raises ValueError for unsupported model features
+            # (equality constraints, mimics, etc). Propagate with a hint.
+            raise ValueError(
+                f"SolverKamino rejected this model: {exc}. "
+                f"Kamino is BETA 1 in Newton 1.2.0 — try sim.solver=mujoco "
+                f"if you need equality/mimic constraints."
+            ) from None
 
     # -- NEWTON API SURFACE -------------------------------------------------
     def _build_soft_solver(self) -> None:
@@ -800,12 +862,18 @@ class NewtonWorld:
         dt = self.physics_dt / self.substeps
         n = self.substeps
         odd = n % 2 == 1
+        is_kamino = self._solver_name == "kamino"
         for i in range(n):
             self.model.collide(self.state_0, self.contacts)
             self.state_0.clear_forces()
             self.solver.step(
                 self.state_0, self.state_1, self.control, self.contacts, dt
             )
+            # Kamino (BETA 1) populates contacts.force lazily via update_contacts
+            # — required for SensorContact + Viewer.log_contacts to see forces
+            # this step. Other solvers fill contacts.force inside step().
+            if is_kamino:
+                self.solver.update_contacts(self.contacts, self.state_0)
             # On the final substep when n is odd, copy the result back into
             # state_0 instead of rebinding Python refs. The Python swap is
             # not recorded into a captured CUDA graph, so an odd number of
