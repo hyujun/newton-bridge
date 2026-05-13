@@ -35,26 +35,25 @@ services:
       # conditionally; the `-` form forwards only when set on the host.
       - FASTDDS_BUILTIN_TRANSPORTS=${FASTDDS_BUILTIN_TRANSPORTS-}
       # -- newton_bridge config --------------------------------------------
+      # ROBOT_PACK stays env-only: it selects which /workspace/robots/<name>
+      # bind-mount the simulator loads, which is container plumbing, not a
+      # session knob. Default is here so `docker compose up` works without
+      # the run.sh wrapper.
       - ROBOT_PACK=${ROBOT_PACK:-/workspace/robots/ur5e}
-      - SYNC_MODE=${SYNC_MODE:-freerun}        # freerun | sync
-      - FREERUN_RATE=${FREERUN_RATE:-realtime} # realtime | max
-      # -- Viewer selection (Phase 7) --------------------------------------
-      # VIEWER picks which Newton viewer attaches. Default: gl (native X11
-      # window with HUD + right-drag picking; X11 passthrough + nvidia GL).
-      # `rerun` is the headless alternative (web UI on host:9090 via
-      # network_mode:host — no X11 needed). `usd`/`file` record to
-      # workspace/runs/. `null` is for benchmarking. `none` disables.
-      - VIEWER=${VIEWER:-gl}
-      - VIEWER_WIDTH=${VIEWER_WIDTH:-1280}
-      - VIEWER_HEIGHT=${VIEWER_HEIGHT:-720}
-      - RERUN_WEB_PORT=${RERUN_WEB_PORT:-9090}
-      - RERUN_GRPC_PORT=${RERUN_GRPC_PORT:-9876}
+      # The rest of the simulator settings live in config/config.yaml
+      # (precedence: CLI > env > yaml > code default). Env vars are still
+      # forwarded for ad-hoc override, but with no compose default — that
+      # way an unset env doesn't shadow the yaml value.
+      - SYNC_MODE=${SYNC_MODE-}                 # freerun | sync
+      - FREERUN_RATE=${FREERUN_RATE-}           # realtime | max
+      # -- Viewer selection ------------------------------------------------
+      - VIEWER=${VIEWER-}                       # gl | rerun | usd | file | null | none
+      - VIEWER_WIDTH=${VIEWER_WIDTH-}
+      - VIEWER_HEIGHT=${VIEWER_HEIGHT-}
+      - RERUN_WEB_PORT=${RERUN_WEB_PORT-}
+      - RERUN_GRPC_PORT=${RERUN_GRPC_PORT-}
       # -- Telemetry --------------------------------------------------------
-      # 1Hz stderr status line (sim_time | step Hz | cmd Hz | render Hz | state).
-      # Default 0 = off; set e.g. 1.0 to enable. STALL state auto-promotes to
-      # WARN level when enabled. /sim/diagnostics is always published at 1Hz
-      # and has no toggle.
-      - STATUS_LOG_HZ=${STATUS_LOG_HZ:-0}
+      - STATUS_LOG_HZ=${STATUS_LOG_HZ-}
       # -- Jupyter ----------------------------------------------------------
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-newton}
     deploy:
@@ -71,6 +70,9 @@ services:
       - ../src:/workspace/newton-bridge/src:ro
       - ../robots:/workspace/robots:ro
       - ../scripts/container:/workspace/scripts:ro
+      # Session settings (sync_mode, viewer, …). config.py looks here first;
+      # falls back to code defaults if missing. See config/config.yaml.
+      - ../config:/workspace/config:ro
       - ../workspace:/workspace/workspace:rw
       # Optional: a host robot_description folder mounted as an external pack.
       # `EXTERNAL_PACK_HOST` defaults to ../robots so the mount is a harmless

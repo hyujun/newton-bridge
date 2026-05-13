@@ -2,15 +2,19 @@
 # Launch / manage the newton-bridge container.
 #
 # Usage:
-#   ./scripts/host/run.sh                              # up (foreground, robot=ur5e, freerun)
+#   ./scripts/host/run.sh                              # up (foreground, robot=ur5e)
 #   ROBOT=franka ./scripts/host/run.sh                 # pick pack
-#   SYNC_MODE=sync ./scripts/host/run.sh               # pick sync mode
+#   SYNC_MODE=sync ./scripts/host/run.sh               # one-shot session override
+#   ./scripts/host/run.sh sim --sync                   # CLI override (highest precedence)
 #   ./scripts/host/run.sh sim                          # same as default up
 #   ./scripts/host/run.sh shell                        # interactive bash
 #   ./scripts/host/run.sh example basic_pendulum       # run a Newton example (viewer gl)
 #   ./scripts/host/run.sh jupyter                      # start Jupyter on host:8888
 #   ./scripts/host/run.sh verify                       # in-container smoke test
 #   ./scripts/host/run.sh down                         # stop + remove container
+#
+# Simulator settings (sync_mode, viewer, status_log_hz, …) live in
+# config/config.yaml. Precedence: CLI flag > env var > yaml > code default.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,12 +51,16 @@ if [[ -n "${EXTERNAL_PACK_HOST:-}" ]]; then
     export EXTERNAL_PACK_HOST
 fi
 : "${ROBOT_PACK:=/workspace/robots/${ROBOT}}"
-: "${SYNC_MODE:=freerun}"
-: "${FREERUN_RATE:=realtime}"
 : "${ROS_DOMAIN_ID:=0}"
 : "${RMW_IMPLEMENTATION:=rmw_cyclonedds_cpp}"
-: "${VIEWER:=gl}"
-export ROBOT_PACK SYNC_MODE FREERUN_RATE ROS_DOMAIN_ID RMW_IMPLEMENTATION VIEWER
+export ROBOT_PACK ROS_DOMAIN_ID RMW_IMPLEMENTATION
+# SYNC_MODE / FREERUN_RATE / VIEWER are now driven by config/config.yaml
+# (precedence: CLI > env > yaml > default). Only export them when the user
+# actually set them on the host shell — otherwise the compose passthrough
+# `${VIEWER-}` resolves empty and config.yaml takes effect.
+[[ -n "${SYNC_MODE:-}" ]]    && export SYNC_MODE
+[[ -n "${FREERUN_RATE:-}" ]] && export FREERUN_RATE
+[[ -n "${VIEWER:-}" ]]       && export VIEWER
 
 # FastDDS only: force UDPv4 because shared-memory transport breaks at the
 # container/host UID boundary. Cyclone DDS has no equivalent knob and doesn't
@@ -118,15 +126,17 @@ case "${MODE}" in
         cat >&2 <<EOF
 usage: $0 [sim|shell|example <name>|jupyter|verify|upd|logs|down]
 
-env overrides:
+env overrides (one-shot; persistent defaults live in config/config.yaml):
   ROBOT=<name>          robots/<name>/ pack to load (default: ur5e)
   EXTERNAL_PACK_HOST=<path>  host folder to use as the pack (URDF only).
                              The folder must contain robot.yaml; meshes resolve
                              relative to the URDF. See docs/ROBOTS.md (Path D).
-  SYNC_MODE=freerun|sync
-  FREERUN_RATE=realtime|max
   ROS_DOMAIN_ID=<n>     match this to your host
-  VIEWER=gl|rerun|usd|file|null|none  (default: gl — native window with right-drag picking; rerun = web viewer at http://localhost:9090)
+  RMW_IMPLEMENTATION=<impl>  rmw_cyclonedds_cpp (default) | rmw_fastrtps_cpp
+
+  SYNC_MODE=freerun|sync          (yaml: sim.sync_mode; CLI: --sync/--freerun)
+  FREERUN_RATE=realtime|max       (yaml: sim.freerun_rate)
+  VIEWER=gl|rerun|usd|file|null|none  (yaml: viewer.mode; CLI: --viewer)
 EOF
         exit 1
         ;;

@@ -121,12 +121,18 @@ def _env_overlay() -> dict:
         )
 
     def _str(name: str) -> str | None:
+        # Treat empty string as unset. docker compose `${VAR-}` forwards a
+        # missing host env as VAR="" inside the container — without this
+        # guard that would clobber the yaml value with an empty string.
         raw = os.environ.get(name)
-        return raw.strip() if raw is not None else None
+        if raw is None:
+            return None
+        s = raw.strip()
+        return s if s else None
 
     def _int(name: str) -> int | None:
         raw = os.environ.get(name)
-        if raw is None:
+        if raw is None or raw.strip() == "":
             return None
         try:
             return int(raw)
@@ -135,7 +141,7 @@ def _env_overlay() -> dict:
 
     def _float(name: str) -> float | None:
         raw = os.environ.get(name)
-        if raw is None:
+        if raw is None or raw.strip() == "":
             return None
         try:
             return float(raw)

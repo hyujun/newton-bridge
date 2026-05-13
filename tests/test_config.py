@@ -127,3 +127,17 @@ def test_status_log_hz_cli_wins(monkeypatch):
     monkeypatch.setenv("STATUS_LOG_HZ", "2.0")
     cfg = resolve(_args(status_log_hz=0.5), config_path=None)
     assert cfg["sim"]["status_log_hz"] == 0.5
+
+
+def test_empty_env_string_is_treated_as_unset(monkeypatch, tmp_path):
+    """`docker compose ${VAR-}` forwards a missing host var as VAR="" inside
+    the container. That must NOT clobber the yaml value with empty string."""
+    _clear_env(monkeypatch)
+    yml = _write_yaml(tmp_path, "viewer:\n  mode: rerun\n  width: 1920\n")
+    monkeypatch.setenv("VIEWER", "")
+    monkeypatch.setenv("VIEWER_WIDTH", "")
+    monkeypatch.setenv("STATUS_LOG_HZ", "")
+    cfg = resolve(_args(), config_path=yml)
+    assert cfg["viewer"]["mode"] == "rerun"
+    assert cfg["viewer"]["width"] == 1920
+    assert cfg["sim"]["status_log_hz"] == _DEFAULTS["sim"]["status_log_hz"]
