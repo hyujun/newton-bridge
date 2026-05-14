@@ -86,8 +86,14 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 #   - torch-cu12: PyTorch CUDA 12.8 wheels for RL policy inference
 #   - notebook: Jupyter + Rerun visualizer
 #   - dev: test / lint tooling
+# PyOpenGL_accelerate is the optional C-extension companion to PyOpenGL (pulled
+# in by newton[examples]). Without it, PyOpenGL emits an INFO log on every
+# import: "No OpenGL_accelerate module loaded". Pinning to the PyOpenGL version
+# keeps the two in lockstep across rebuilds.
 RUN pip install --no-cache-dir \
-        "newton[examples,notebook,dev]>=1.2.0,<1.3"
+        "newton[examples,notebook,dev]>=1.2.0,<1.3" \
+ && PYOPENGL_VERSION="$(pip show PyOpenGL | awk '/^Version:/ {print $2}')" \
+ && pip install --no-cache-dir "PyOpenGL_accelerate==${PYOPENGL_VERSION}"
 
 # torch-cu12 lives on PyTorch's CUDA wheel index — install in a separate layer
 # so a re-pull doesn't re-download the ~2GB torch wheels unless this line changes.
